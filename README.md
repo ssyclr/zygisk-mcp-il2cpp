@@ -51,6 +51,14 @@ com.example.anothergame
 python mcp/mcp_server.py --port 27184
 ```
 
+如果 MCP Server 就运行在目标 Android 设备上，使用直连模式，不需要 ADB 端口转发：
+
+```sh
+python mcp/mcp_server.py --port 27184 --direct
+```
+
+默认模式会先尝试直连 `127.0.0.1:27184`，连接失败后才自动执行 `adb forward`；`--direct` 会关闭这一回退行为。
+
 客户端配置示例：
 
 ```json
