@@ -10,6 +10,14 @@
 python mcp/mcp_server.py --port 27184
 ```
 
+如果 MCP Server 直接运行在目标 Android 机器上，使用直连模式，无需 ADB 转发：
+
+```sh
+python mcp/mcp_server.py --port 27184 --direct
+```
+
+默认模式会先连接本机 `127.0.0.1:27184`，失败后再尝试 `adb forward`；`--direct` 会禁用自动转发。
+
 也可以从项目根目录使用整理好的启动脚本：
 
 ```powershell

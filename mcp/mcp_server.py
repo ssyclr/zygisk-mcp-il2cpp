@@ -1947,6 +1947,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--adb", default=os.environ.get("ADB", "adb"), help="ADB executable path")
     parser.add_argument("--serial", default=os.environ.get("ANDROID_SERIAL"), help="ADB device serial")
     parser.add_argument("--no-adb-forward", action="store_true", help="Do not create adb forward automatically")
+    parser.add_argument(
+        "--direct",
+        action="store_true",
+        help="Run on the target Android machine and connect directly; disables ADB forwarding",
+    )
     return parser.parse_args(argv)
 
 
@@ -1956,7 +1961,7 @@ def main(argv: list[str] | None = None) -> int:
         host=args.host,
         port=args.port,
         timeout=args.timeout,
-        auto_adb_forward=not args.no_adb_forward,
+        auto_adb_forward=not (args.no_adb_forward or args.direct),
         adb_path=args.adb,
         adb_serial=args.serial,
     )
