@@ -2,6 +2,10 @@
 
 把 Android Unity IL2CPP 游戏进程中的运行时查询、方法调用和 Dobby Hook 暴露给 MCP 客户端的 Zygisk 模块。
 
+## 频道
+
+TG:@il2cppmcp QQ:276342773
+
 ## 已实现
 
 - 通过持久目录中的 `apps.txt` 配置多个目标包名，同时匹配应用主进程和 `包名:子进程`。
