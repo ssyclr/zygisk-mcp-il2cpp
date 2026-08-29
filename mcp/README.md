@@ -18,6 +18,18 @@ python mcp/mcp_server.py --port 27184 --direct
 
 默认模式会先连接本机 `127.0.0.1:27184`，失败后再尝试 `adb forward`；`--direct` 会禁用自动转发。
 
+MCP 还会启动独立的浏览器控制页面，默认地址是 `http://127.0.0.1:27185/`。所有功能开关第一次启动时全部开启，页面修改会立即影响 `tools/list` 并保存到 `mcp_features.json`。可用参数：
+
+```text
+--admin-host 127.0.0.1
+--admin-port 27185
+--admin-token <token>
+--no-admin
+--feature-config <json-path>
+```
+
+非回环管理地址必须设置令牌。功能读取、单项切换和全部切换只存在于浏览器管理 API，不注册为 MCP tools，因此 Agent 无法看到或调用管理接口。被禁用的工具不会返回给 Agent，`raw_hook_call` 也不能绕过开关；关闭全部功能后仍可通过浏览器页面恢复。
+
 也可以从项目根目录使用整理好的启动脚本：
 
 ```powershell
@@ -57,13 +69,29 @@ adb forward tcp:<port> tcp:<port>
 - `il2cpp_list_images`：枚举已加载的程序集镜像。
 - `il2cpp_list_classes`：按命名空间/类名过滤镜像内类型。
 - `il2cpp_list_methods`：枚举方法、参数类型、返回类型、绝对地址和 RVA。
+- `il2cpp_list_fields`：枚举字段类型、Offset、Flags、静态/常量状态，可选择父类字段。
+- `il2cpp_search`：跨一个或全部 Image 模糊搜索 `class`、`method` 或 `field`，支持 Image/命名空间/类过滤、大小写、包含/前缀/精确匹配及分页。
 - `il2cpp_find_method`：精确解析方法。
-- `il2cpp_invoke`：通过 `il2cpp_runtime_invoke` 调用静态方法或指定实例地址的方法。
+- `il2cpp_invoke` / `il2cpp_call`：通过 `il2cpp_runtime_invoke` 调用静态方法或指定实例地址的方法。
+- `il2cpp_object_inspect`：按地址加载对象及字段值，可包含继承字段。
+- `il2cpp_list_items`：分页读取一维数组或 `List<T>`。
+- `il2cpp_dictionary_get`：按类型化 Key 调用 `Dictionary<TKey,TValue>.get_Item`。
 - `il2cpp_hook`：解析方法后，将其 Dobby Hook 到自定义原生 replacement 地址。
 - `il2cpp_hook_return`：解析方法后安装固定返回值 Hook。
 - `il2cpp_unhook`：解析方法后通过 `DobbyDestroy` 恢复。
 
 `il2cpp_invoke.arguments` 支持布尔值、数值、字符串、`null` 和枚举。引用对象参数可把对象地址作为字符串传入；实例方法必须提供 `instance_address`。
+
+也支持显式参数类型，适合数值类型、对象地址或枚举容易产生歧义的调用：
+
+```json
+[
+  {"type":"i32","value":42},
+  {"type":"string","value":"test"},
+  {"type":"object","value":"0x7abc123000"},
+  {"type":"enum","value":"RoleSyncState.Walking"}
+]
+```
 
 枚举参数会根据目标方法元数据自动读取真实底层整数类型，可使用以下任一写法：
 
@@ -93,6 +121,10 @@ files/zygisk_il2cpp_mcp/il2cpp_dump.cs
 - `memory_list_modules`：列出当前进程的可执行模块、起止地址、load bias、映射段数量和同名实例序号。
 - `memory_find_module`：通过精确模块名/完整路径和从 1 开始的 `occurrence` 定位指定模块实例，并返回全部映射段。
 - `memory_address_info`：定位地址所在的映射区域、权限、文件偏移、所属模块和相对偏移。
+- `memory_resolve_address`：解析模块 load bias/start 加有符号 Offset。
+- `memory_resolve_pointer_chain`：解析最多 32 级的模块基址或绝对基址指针链，并返回每一级地址。
+- `memory_read_pointer_chain` / `memory_write_pointer_chain`：解析指针链后读写类型化数值。
+- `memory_scan_base`：多线程扫描指向模块基址、模块 Offset 或绝对地址的指针。
 - `memory_search`：在模块实例或指定地址范围内搜索字节特征并创建过滤会话。
 - `memory_search_value`：编码并搜索类型化数值。
 - `memory_search_exact`：把同一个数值按多个勾选的类型分别执行精确搜索。
@@ -111,6 +143,8 @@ files/zygisk_il2cpp_mcp/il2cpp_dump.cs
 ```
 
 类型化调用支持 `bool`、`i8`、`u8`、`i16`、`u16`、`i32`、`u32`、`i64`、`u64`、`f32`、`f64`、`ptr32` 和 `ptr64`。指针类型需要按目标进程 ABI 选择；整数和指针写入值可使用 `0x...` 字符串。
+
+指针链从 `module load_bias + base_offset` 或 `base_address + base_offset` 开始。每个 `offsets` 元素执行“读取当前指针，再加该有符号 Offset”；结果会返回全部中间步骤。基址扫描的 `workers=0` 会自动选择至少 2 个、最多 32 个线程，也可显式指定。System 后端允许并行 I/O；驱动后端为了兼容未知 ioctl 线程安全性，底层读操作保持串行，但分片调度和匹配仍为多线程。
 
 这些工具不依赖 IL2CPP 初始化，可用于普通 Native、Mono 或其他引擎进程。默认内存访问使用 `process_vm_readv/process_vm_writev`，并在操作前校验完整映射区间权限。WebUI 选择驱动后，只有内存读写和搜索切换到驱动；模块枚举、地址归属、IL2CPP、Dobby、Lua 调度、汇编和断点仍走原系统路径。
 
@@ -173,13 +207,14 @@ WebUI 支持 `system`、`kpm_kma`、`dit_pro_kpm`、`kpm_ap_read_ioctl`、`kpm_m
 - `assembly_disassemble`：使用原系统读取路径和 Capstone 反汇编 ARM64 内存。
 - `assembly_patch`：汇编后通过 DobbyCodePatch 修改可执行地址。
 - `breakpoint_status` / `breakpoint_set` / `breakpoint_list` / `breakpoint_hits` / `breakpoint_clear` / `breakpoint_clear_all`：管理不暂停进程的 ARM64 perf 硬件执行断点和数据监视点。
+- `breakpoint_backtrace`：通过 `breakpoint_hits` 返回的 `hit_id` 读取命中时采样的用户栈回溯，并解析每帧所属映射/模块。
 
 汇编、反汇编与硬件断点当前是 ARM64 能力。ARM32 或禁止 `perf_event_open` 的内核会返回明确的 unsupported/failed 原因，其他 MCP tools 仍正常使用。
 
 ## Help 与兼容性
 
 - `runtime_capabilities`：一次返回内存后端、LuaJIT、汇编、断点、Dobby 与 IL2CPP 的独立状态，不会提前初始化可选能力。
-- `debug_help`：不传 `command` 时列出定制原生命令；传入例如 `ASM_PATCH` 时返回 usage 和说明。
+- `debug_help`：传 MCP 工具名时直接返回该工具的说明、Schema 和功能组；不传时列出定制原生命令，传原生命令时返回 usage。
 
 ## JNI Toast tools
 
@@ -194,7 +229,8 @@ WebUI 支持 `system`、`kpm_kma`、`dit_pro_kpm`、`kpm_ap_read_ioctl`、`kpm_m
 - `dobby_resolve_symbol`：通过 `DobbySymbolResolver` 解析符号。
 - `dobby_hook`：按 target/replacement 原生地址安装 Hook，并返回原函数 trampoline。
 - `dobby_hook_return`：按地址安装固定返回值 Hook。
-- `dobby_instrument` / `dobby_trace_get`：插桩并读取执行计数。
+- `dobby_instrument` / `dobby_trace_get`：插桩并读取执行计数、最新线程和寄存器快照。
+- `dobby_trace_backtrace`：读取 Dobby 插桩最近一次命中的 ARM64 帧指针回溯，并解析模块区域。
 - `dobby_patch_code`：使用 `DobbyCodePatch` 写入机器码，单次最多 4096 字节。
 - `dobby_destroy`：卸载通过 Dobby Hook/Instrument 安装的拦截。
 - `dobby_list_hooks`：列出由桥接层记录的 Hook 和插桩。

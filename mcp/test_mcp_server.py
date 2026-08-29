@@ -4,9 +4,18 @@ import json
 import socket
 import threading
 import unittest
+import urllib.request
 from unittest.mock import call, patch
 
-from mcp.mcp_server import BridgeError, ConnectionConfig, HookSocketClient, McpServer, ToolDispatcher
+from mcp.mcp_server import (
+    BridgeError,
+    ConnectionConfig,
+    FeatureRegistry,
+    HookSocketClient,
+    McpServer,
+    McpAdminServer,
+    ToolDispatcher,
+)
 
 
 class OneShotHookServer:
@@ -96,6 +105,17 @@ class McpServerTests(unittest.TestCase):
         self.assertEqual(len(names), len(response["result"]["tools"]))
         self.assertIn("mcp_toast_set_enabled", names)
         self.assertIn("mcp_toast_show", names)
+        self.assertNotIn("mcp_list_features", names)
+        self.assertNotIn("mcp_set_feature", names)
+        self.assertNotIn("mcp_set_all_features", names)
+        self.assertNotIn("mcp_admin_info", names)
+        self.assertIn("il2cpp_search", names)
+        self.assertIn("il2cpp_list_fields", names)
+        self.assertIn("il2cpp_object_inspect", names)
+        self.assertIn("memory_resolve_pointer_chain", names)
+        self.assertIn("memory_scan_base", names)
+        self.assertIn("breakpoint_backtrace", names)
+        self.assertIn("dobby_trace_backtrace", names)
 
         invoke_tool = next(tool for tool in response["result"]["tools"] if tool["name"] == "il2cpp_invoke")
         argument_variants = invoke_tool["inputSchema"]["properties"]["arguments"]["items"]["anyOf"]
@@ -110,6 +130,131 @@ class McpServerTests(unittest.TestCase):
             ToolDispatcher._invoke_token({"enum": 1.5})
         with self.assertRaises(BridgeError):
             ToolDispatcher._invoke_token({"enum": 1, "type": "RoleSyncState"})
+
+        self.assertEqual("b1", ToolDispatcher._invoke_token({"type": "bool", "value": True}))
+        self.assertEqual("n3432", ToolDispatcher._invoke_token({"type": "i32", "value": "0x2a"}))
+        self.assertEqual("s307831323334", ToolDispatcher._invoke_token({"address": "0x1234"}))
+
+    def test_feature_switches_filter_and_block_tools(self) -> None:
+        registry = FeatureRegistry()
+        dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False), registry)
+        server = McpServer(dispatcher)
+        self.assertTrue(all(item["enabled"] for item in registry.snapshot()["features"]))
+
+        registry.set("memory_write", False)
+        response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
+        names = {tool["name"] for tool in response["result"]["tools"]}
+        self.assertNotIn("memory_write", names)
+        self.assertNotIn("memory_write_value", names)
+        self.assertNotIn("memory_write_pointer_chain", names)
+        self.assertIn("memory_read", names)
+        self.assertNotIn("mcp_set_feature", names)
+        with self.assertRaisesRegex(BridgeError, "memory_write"):
+            dispatcher.call("memory_write", {"address": "0x1000", "hex_bytes": "00"})
+        with self.assertRaisesRegex(BridgeError, "unknown tool"):
+            dispatcher.call("mcp_set_feature", {"feature": "memory_write", "enabled": True})
+
+    def test_browser_admin_switches_feature(self) -> None:
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+        probe.close()
+        registry = FeatureRegistry()
+        admin = McpAdminServer(registry, "127.0.0.1", port)
+        admin.start()
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=2) as response:
+                page = response.read().decode("utf-8")
+            self.assertIn("MCP 功能控制", page)
+            self.assertNotIn("{{", page)
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/features", timeout=2) as response:
+                payload = json.loads(response.read())
+            self.assertTrue(payload["default_enabled"])
+            request = urllib.request.Request(
+                f"http://127.0.0.1:{port}/api/features/trace",
+                data=b'{"enabled":false}',
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(request, timeout=2) as response:
+                result = json.loads(response.read())
+            self.assertFalse(result["enabled"])
+            self.assertFalse(registry.enabled("trace"))
+        finally:
+            admin.stop()
+
+    def test_raw_command_cannot_bypass_feature_switch(self) -> None:
+        registry = FeatureRegistry()
+        registry.set("il2cpp_hook", False)
+        dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False), registry)
+        with self.assertRaisesRegex(BridgeError, "il2cpp_hook"):
+            dispatcher.raw_hook_call({"command": "IL2CPP_HOOK 00"})
+
+    def test_il2cpp_search_and_field_commands(self) -> None:
+        dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False))
+        with patch.object(dispatcher, "_json_call", return_value={"results": []}) as json_call:
+            dispatcher.il2cpp_search(
+                {
+                    "entity": "method",
+                    "query": "Move",
+                    "image_filter": "Assembly-CSharp",
+                    "namespace_filter": "Game",
+                    "class_filter": "Role",
+                    "match_mode": "prefix",
+                    "case_sensitive": False,
+                    "offset": 20,
+                    "limit": 50,
+                }
+            )
+        json_call.assert_called_once_with(
+            "IL2CPP_SEARCH method 4d6f7665 417373656d626c792d435368617270 47616d65 526f6c65 prefix 0 20 50",
+            timeout=60.0,
+        )
+
+        with patch.object(dispatcher, "_json_call", return_value={"fields": []}) as json_call:
+            dispatcher.il2cpp_list_fields(
+                {"image": "A.dll", "namespace": "N", "class_name": "C", "include_inherited": True}
+            )
+        json_call.assert_called_once_with("IL2CPP_FIELDS 412e646c6c 4e 43 - 1 0 200")
+
+    def test_pointer_chain_resolution(self) -> None:
+        dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False))
+        module = {"load_bias": "0x1000", "start": "0x1100", "end": "0x3000"}
+        with patch.object(dispatcher, "memory_find_module", return_value=module), patch.object(
+            dispatcher,
+            "memory_read_value",
+            side_effect=[{"value": "0x2000"}, {"value": "0x3000"}],
+        ):
+            result = dispatcher.memory_resolve_pointer_chain(
+                {
+                    "module": "libgame.so",
+                    "base_offset": "0x20",
+                    "offsets": ["0x10", "-0x8"],
+                    "pointer_size": 8,
+                }
+            )
+        self.assertEqual("0x2ff8", result["address"])
+        self.assertEqual("0x1020", result["steps"][0]["read_at"])
+
+    def test_multithread_base_scan_command(self) -> None:
+        dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False))
+        with patch.object(dispatcher, "_json_call", return_value={"session_id": 9}) as json_call:
+            result = dispatcher.memory_scan_base(
+                {
+                    "target_address": "0x12345678",
+                    "start": "0x1000",
+                    "end": "0x9000",
+                    "pointer_size": 8,
+                    "workers": 4,
+                    "memory_types": ["heap", "anonymous"],
+                    "max_results": 200,
+                }
+            )
+        json_call.assert_called_once_with(
+            "MEMORY_POINTER_SCAN_MT 0x1000 0x9000 0x12345678 8 200 4 686561702c616e6f6e796d6f7573",
+            timeout=300.0,
+        )
+        self.assertEqual(4, result["workers"])
 
     def test_memory_read_and_write_commands(self) -> None:
         with OneShotHookServer('{"address":"0x1000","size":2,"hex":"01ff"}') as server:
@@ -248,8 +393,9 @@ class McpServerTests(unittest.TestCase):
         json_call.assert_called_once_with("BREAKPOINT_SET 0x1234 x 4")
 
         with patch.object(dispatcher, "_json_call", return_value={"command": "ASM_PATCH"}) as json_call:
-            dispatcher.debug_help({"command": "assembly_patch"})
-        json_call.assert_called_once_with("HELP ASM_PATCH")
+            help_result = dispatcher.debug_help({"command": "assembly_patch"})
+        json_call.assert_not_called()
+        self.assertEqual("assembly_patch", help_result["tool"])
 
     def test_connection_info_has_structured_content(self) -> None:
         response = self.server.handle(
