@@ -1,6 +1,6 @@
 # Zygisk IL2CPP MCP
 
-把 Android Unity IL2CPP 游戏进程中的运行时查询、方法调用和 Dobby Hook 暴露给 MCP 客户端的 Zygisk 模块。
+把 Android Unity IL2CPP 游戏进程中的运行时查询、方法调用和 Dobby Hook 暴露给 MCP 客户端的 Zygisk 模块。我要Star⭐ QAQ
 
 ## 已实现
 
