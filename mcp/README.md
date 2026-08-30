@@ -211,6 +211,17 @@ WebUI 支持 `system`、`kpm_kma`、`dit_pro_kpm`、`kpm_ap_read_ioctl`、`kpm_m
 
 汇编、反汇编与硬件断点当前是 ARM64 能力。ARM32 或禁止 `perf_event_open` 的内核会返回明确的 unsupported/failed 原因，其他 MCP tools 仍正常使用。
 
+## Ghidra 反编译
+
+- `decompiler_status`：查询 ARM64 Ghidra Native 引擎、运行时内存读取和 IL2CPP 类型元数据状态。
+- `decompile_function`：读取指定地址和范围，返回 Ghidra/Sleigh 生成的 C 风格伪代码。
+
+反编译器使用独立的 `libghidra_decompiler.so`，不依赖 Java、RetDec 或外部服务。输入地址精确命中 IL2CPP 方法起始地址时，会自动注入方法名、返回类型、`this`、托管参数、隐藏的 `MethodInfo*` 参数，以及声明类和继承类的实例字段布局。未命中 IL2CPP 方法时仍可作为普通 ARM64 Native 反编译器使用。
+
+引擎通过受限回调读取目标实时内存，并把 `/proc/self/maps` 中的只读区域传给 Ghidra，用于分析全局数据和已初始化的运行时字符串。函数分析严格限制在请求范围内；范围外直接分支会生成截断桩，不再导致整个反编译请求失败。
+
+当前限制：范围外尾调用可能仍显示为 `halt_missing()`；调用目标尚未批量替换成 IL2CPP 方法名；未初始化的 IL2CPP 编码字符串槽不会自动展开为文本。反编译器缺失、ABI 不兼容或初始化失败只会停用这一功能，不影响内存、Hook、Dobby、Lua 或断点工具。
+
 ## Help 与兼容性
 
 - `runtime_capabilities`：一次返回内存后端、LuaJIT、汇编、断点、Dobby 与 IL2CPP 的独立状态，不会提前初始化可选能力。

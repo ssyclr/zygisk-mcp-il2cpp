@@ -20,7 +20,7 @@ from urllib.parse import urlparse
 
 
 SERVER_NAME = "zygisk-il2cpp-mcp"
-SERVER_VERSION = "2.1.0"
+SERVER_VERSION = "2.2.1"
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = {
     "2024-11-05",
@@ -47,6 +47,7 @@ FEATURES: dict[str, str] = {
     "trace": "Dobby execution tracing and trace backtraces",
     "lua": "Embedded LuaJIT execution",
     "assembly": "Assembly, disassembly, and instruction patching",
+    "decompiler": "Ghidra-native ARM64 C pseudocode decompilation",
     "breakpoint": "Hardware breakpoints, watchpoints, hits, and backtraces",
     "diagnostics": "Runtime capabilities, help, and raw bridge commands",
 }
@@ -1082,6 +1083,32 @@ TOOLS.extend(
             "annotations": {"openWorldHint": False},
         },
         {
+            "name": "decompiler_status",
+            "title": "Get pseudocode engine status",
+            "description": "Report whether the isolated Ghidra-native ARM64 decompiler is loaded in the target process.",
+            "inputSchema": EMPTY_SCHEMA,
+            "annotations": {"readOnlyHint": True, "openWorldHint": False},
+        },
+        {
+            "name": "decompile_function",
+            "title": "Decompile ARM64 function",
+            "description": "Decompile a bounded ARM64 function with Ghidra/Sleigh using live target memory for referenced strings and globals. Exact IL2CPP method addresses automatically receive managed return, parameter, class, and field-offset types.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "address": {"type": "string", "description": "Runtime function address."},
+                    "size": {"type": "integer", "minimum": 4, "maximum": 65536, "multipleOf": 4, "default": 256},
+                    "max_instructions": {"type": "integer", "minimum": 1, "maximum": 4096, "default": 256},
+                    "max_output_bytes": {"type": "integer", "minimum": 256, "maximum": 1048576, "default": 262144},
+                    "optimize": {"type": "boolean", "default": True},
+                    "stop_at_return": {"type": "boolean", "default": True, "description": "Stop at the first linear RET when an exact function size is unavailable."},
+                },
+                "required": ["address"],
+                "additionalProperties": False,
+            },
+            "annotations": {"readOnlyHint": True, "openWorldHint": False},
+        },
+        {
             "name": "breakpoint_status",
             "title": "Get hardware breakpoint status",
             "description": "Report ARM64 perf hardware breakpoint support and lazy initialization state.",
@@ -1429,6 +1456,8 @@ def tool_features(name: str) -> tuple[str, ...]:
         return ("lua",)
     if name.startswith("assembly_"):
         return ("assembly",)
+    if name == "decompiler_status" or name == "decompile_function":
+        return ("decompiler",)
     if name.startswith("breakpoint_"):
         return ("breakpoint",)
     if name in {"debug_help", "runtime_capabilities", "raw_hook_call"}:
@@ -1657,6 +1686,8 @@ class ToolDispatcher:
             "assembly_assemble": self.assembly_assemble,
             "assembly_disassemble": self.assembly_disassemble,
             "assembly_patch": self.assembly_patch,
+            "decompiler_status": self.decompiler_status,
+            "decompile_function": self.decompile_function,
             "breakpoint_status": self.breakpoint_status,
             "breakpoint_set": self.breakpoint_set,
             "breakpoint_list": self.breakpoint_list,
@@ -1819,6 +1850,8 @@ class ToolDispatcher:
             raw_features = ("lua",)
         elif native_name.startswith("ASM_"):
             raw_features = ("assembly",)
+        elif native_name.startswith("DECOMP_"):
+            raw_features = ("decompiler",)
         else:
             raw_features = ("diagnostics",)
         disabled = [feature for feature in raw_features if not self.registry.enabled(feature)]
@@ -2664,6 +2697,8 @@ class ToolDispatcher:
             "ASSEMBLY_ASSEMBLE": "ASM_ASSEMBLE",
             "ASSEMBLY_DISASSEMBLE": "ASM_DISASSEMBLE",
             "ASSEMBLY_PATCH": "ASM_PATCH",
+            "DECOMPILER_STATUS": "DECOMP_STATUS",
+            "DECOMPILE_FUNCTION": "DECOMP_DECOMPILE",
             "BREAKPOINT_STATUS": "BREAKPOINT_STATUS",
             "BREAKPOINT_SET": "BREAKPOINT_SET",
             "BREAKPOINT_LIST": "BREAKPOINT_LIST",
@@ -2734,6 +2769,30 @@ class ToolDispatcher:
         if not instruction or len(instruction.encode("utf-8")) > 1024:
             raise BridgeError("instruction must contain 1 to 1024 UTF-8 bytes")
         return self._json_call(f"ASM_PATCH {address} {self._hex_text(instruction)}")
+
+    def decompiler_status(self, _: dict[str, Any]) -> dict[str, Any]:
+        return self._json_call("DECOMP_STATUS")
+
+    def decompile_function(self, args: dict[str, Any]) -> dict[str, Any]:
+        address = self._address(self._required_text(args, "address"), "address")
+        size = self._bounded_integer(args.get("size", 256), "size", 4, 65536)
+        if size % 4:
+            raise BridgeError("size must be a multiple of 4 for ARM64")
+        maximum = self._bounded_integer(
+            args.get("max_instructions", 256), "max_instructions", 1, 4096
+        )
+        max_output = self._bounded_integer(
+            args.get("max_output_bytes", 262144), "max_output_bytes", 256, 1048576
+        )
+        optimize = args.get("optimize", True)
+        stop_at_return = args.get("stop_at_return", True)
+        if not isinstance(optimize, bool) or not isinstance(stop_at_return, bool):
+            raise BridgeError("optimize and stop_at_return must be booleans")
+        return self._json_call(
+            f"DECOMP_DECOMPILE {address} {size} {maximum} {max_output} "
+            f"{1 if optimize else 0} {1 if stop_at_return else 0}",
+            timeout=max(self.config.timeout, 60.0),
+        )
 
     def breakpoint_status(self, _: dict[str, Any]) -> dict[str, Any]:
         return self._json_call("BREAKPOINT_STATUS")

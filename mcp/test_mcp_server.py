@@ -101,6 +101,8 @@ class McpServerTests(unittest.TestCase):
         self.assertIn("lua_execute", names)
         self.assertIn("lua_logs", names)
         self.assertIn("assembly_patch", names)
+        self.assertIn("decompiler_status", names)
+        self.assertIn("decompile_function", names)
         self.assertIn("breakpoint_set", names)
         self.assertEqual(len(names), len(response["result"]["tools"]))
         self.assertIn("mcp_toast_set_enabled", names)
@@ -189,6 +191,9 @@ class McpServerTests(unittest.TestCase):
         dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False), registry)
         with self.assertRaisesRegex(BridgeError, "il2cpp_hook"):
             dispatcher.raw_hook_call({"command": "IL2CPP_HOOK 00"})
+        registry.set("decompiler", False)
+        with self.assertRaisesRegex(BridgeError, "decompiler"):
+            dispatcher.raw_hook_call({"command": "DECOMP_STATUS"})
 
     def test_il2cpp_search_and_field_commands(self) -> None:
         dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False))
@@ -387,6 +392,15 @@ class McpServerTests(unittest.TestCase):
         with patch.object(dispatcher, "_json_call", return_value={"bytes_hex": "1f2003d5"}) as json_call:
             dispatcher.assembly_assemble({"instruction": "nop"})
         json_call.assert_called_once_with("ASM_ASSEMBLE 6e6f70")
+
+        with patch.object(dispatcher, "_json_call", return_value={"pseudocode": "void sub_1234() {}"}) as json_call:
+            dispatcher.decompile_function({"address": "0x1234"})
+        json_call.assert_called_once_with(
+            "DECOMP_DECOMPILE 0x1234 256 256 262144 1 1", timeout=60.0
+        )
+
+        with self.assertRaises(BridgeError):
+            dispatcher.decompile_function({"address": "0x1234", "size": 7})
 
         with patch.object(dispatcher, "_json_call", return_value={"set": True}) as json_call:
             dispatcher.breakpoint_set({"address": "0x1234", "type": "x"})
