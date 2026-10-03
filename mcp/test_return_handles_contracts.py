@@ -17,7 +17,8 @@ class ReturnHandleSourceContracts(unittest.TestCase):
         self.assertIn("std::array<Entry,Capacity> entries", self.handles)
         entry = re.search(r"struct Entry \{([^}]+)\}", self.handles).group(1)
         self.assertIn("uint64_t id=0", entry)
-        self.assertIn("uint32_t weak=0", entry)
+        self.assertIn("Il2CppGCHandle weak=0", entry)
+        self.assertNotIn("uint32_t weak", entry)
         self.assertNotIn("address", entry)
         self.assertNotIn("Il2CppObject", entry)
         remember = self.handles.split("std::string remember(", 1)[1].split("bool parseId(", 1)[0]

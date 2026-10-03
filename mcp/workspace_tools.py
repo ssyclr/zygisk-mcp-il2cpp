@@ -101,9 +101,9 @@ TOOLS = [
     r.tool("render_set_rule", "Create/patch a render rule (up to 32): class/name/group/tag/layers, active-only, scalar condition, label templates, style overrides, field bindings, health/max_health and automatic Renderer/Collider bounds. Higher priority applies later. Alias bindings use field names; label {name}/{type}/{address}/{distance} plus bound aliases. Fields are sampled on every bound game frame, not the drawing thread. Unsupported components/bones/occlusion degrade independently.", {"descriptor": RULE}, ("descriptor",)),
     r.tool("render_list_rules", "Read rendering filters, live field recipes and appearance rules.", readonly=True),
     r.tool("render_remove_rule", "Remove one display rule; does not modify game objects or other rules.", {"id": ID}, ("id",)),
-    r.tool("workspace_state", "Read shared UI selection, navigation history, bookmarks and whether a Unity game-frame hook is bound.", readonly=True),
+    r.tool("workspace_state", "Read UI selection, history, navigation_revision and frame binding. scope=global (default) is combined browsing history; object is the independent inspector path, unaffected by opening code.", {"scope": r.enum("global", "object")}, readonly=True),
     r.tool("workspace_navigate", "Navigate the manual workspace to an object inspector, method or memory address. Target data is queried only when its manual page requests it.", {"selection": SELECTION}, ("selection",)),
-    r.tool("workspace_history", "Navigate shared workspace history back or forward.", {"direction": r.enum("back", "forward")}, ("direction",)),
+    r.tool("workspace_history", "Navigate history: supply direction back/forward OR index from workspace_state using the SAME scope (global default, or independent object path). Ancestor selection preserves forward entries until a new branch is opened. No game actions.", {"direction": r.enum("back", "forward"), "index": integer(0,63), "scope": r.enum("global", "object")}),
     r.tool("workspace_bookmark_set", "Bookmark a live selection. Presets keep only symbolic method/module+offset bookmarks; raw object pointers are deliberately not persisted across restart.", {"id": ID, "selection": SELECTION}, ("id", "selection")),
     r.tool("workspace_bookmark_remove", "Remove one workspace bookmark; does not change memory, hooks or display objects.", {"id": ID}, ("id",)),
     r.tool("workspace_bookmark_open", "Resolve and open a saved bookmark. Method recipes use image/type/metadata token; module recipes use module name/path, 1-based occurrence (default 1), and offset from module start. Checks the resolved address lies in an actual mapped region. Does not invoke the method or restore object identities.", {"id": ID}, ("id",)),
@@ -232,6 +232,8 @@ def encode(name: str, args: dict, invoke: Callable[[Any], str] | None = None) ->
             command = "WORKSPACE_CALLER"
         _bounded_json(data)
         return command + " " + _json(data, 4*1024*1024 if name == "workspace_browser" else 65536)
+    if name == "workspace_state":
+        return "WORKSPACE_STATE" + (" " + args["scope"] if "scope" in args else "")
     if name in SIMPLE:
         return SIMPLE[name]
     if name in DESCRIPTORS:
@@ -275,7 +277,9 @@ def encode(name: str, args: dict, invoke: Callable[[Any], str] | None = None) ->
             return "WORKSPACE_NAVIGATE " + _json(selection, 4096)
         return f"WORKSPACE_BOOKMARK_SET {r.text(args['id'])} {_json(selection, 4096)}"
     if name == "workspace_history":
-        return "WORKSPACE_HISTORY " + args["direction"]
+        if ("direction" in args) == ("index" in args):
+            raise ValueError("Supply exactly one of direction or index")
+        return "WORKSPACE_HISTORY " + str(args.get("direction", args.get("index"))) + (" " + args["scope"] if "scope" in args else "")
     if name == "workspace_result":
         return f"WORKSPACE_RESULT {args['request_id']}"
     if name == "workspace_export_logs":
@@ -467,6 +471,7 @@ def extra_features(name: str, args: dict) -> set[str]:
     return result
 
 def native_features(command: str) -> tuple[str, ...] | None:
+    if command == "IL2CPP_RENDER_INVENTORY": return ("rendering", *OBJECT_FEATURES)
     if command == "FRIDA_CONTROL": return ("frida", "trace")
     if command in {"UNITY_MODEL_SNAPSHOT","UNITY_MODEL_EXPORT","UNITY_ASSET_MONITOR"}: return ("rendering", *OBJECT_FEATURES)
     if command in {"IL2CPP_GENERIC_RESOLVE","IL2CPP_PARAMETER_SCHEMA"}: return OBJECT_FEATURES

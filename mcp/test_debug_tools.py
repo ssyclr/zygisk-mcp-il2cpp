@@ -58,7 +58,7 @@ class DebugToolsTests(unittest.TestCase):
 
     def test_native_commands_have_help(self):
         cpp = Path(__file__).resolve().parents[1] / "module/src/main/cpp"
-        runtime = (cpp / "runtime_bridge.cpp").read_text(encoding="utf-8")
+        runtime = (cpp / "native_command_catalog.h").read_text(encoding="utf-8")
         for name, args in EXAMPLES.items():
             command = d.encode(name, args).split()[0]
             self.assertIn('{"' + command + '",', runtime)

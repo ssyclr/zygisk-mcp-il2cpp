@@ -13,13 +13,16 @@ https://ifdian.net/a/__mcp/plan
 
 - 通过持久目录中的 `apps.txt` 配置多个目标：不带冒号的包名匹配主进程及子进程；带冒号的完整名称仅匹配指定子进程。
 - 通过持久目录中的 `port.txt` 自定义 MCP/命令 Socket 端口，默认 `27184`。
+- 原生 HTTP MCP 与旧 Socket 共用端口；HTTP 客户端使用 Bearer 令牌，每个会话独立选择进程。Python stdio 方式继续保留。
+- Web 可设置延迟注入／初始化，0–3600 秒，默认 0；等待在后台线程执行，不阻塞游戏启动线程。
 - 由 Zygisk Root companion 读取配置并通过 IPC 传给目标进程，兼容应用进程无法访问 `/data/adb` 的环境。
-- 全新 KernelSU/Magisk WebUI：添加/移除多个包名、修改端口、连接检测、复制 MCP 配置、一键导出 `MCP.zip`。
+- KernelSU/Magisk 黑白极简 WebUI：添加/移除多个包名、修改端口、连接检测、自动获取局域网连接地址、复制 MCP 配置、一键导出 `MCP.zip`；适配手机、平板和大屏。
 - 游戏内 ImGui 悬浮菜单：Java SurfaceView 显示，使用 `zh_Font.h` 字体、中英双语、原生标题栏折叠/展开与尺寸调整；默认 Classic 紫色主题，可切换 Dark/Light。保留 Toast、Dump、运行状态和内存/ARM64 分析入口。
 - 对象可视化：自动游戏帧连接、类筛选、多类自动跟踪、对象多选、相机选择、射线、2D/角框/3D 轴对齐方框、名称/距离/计数、人形骨骼；遮挡检测已移除。矩阵接口被裁剪时支持 WorldToScreenPoint 降级，Unity 调用仍只在游戏帧回调执行。
 - 渲染/UI/工作台 MCP 工具：对象与规则、独立父/子窗口、控件树、双向绑定、Lua UI 程序、网格/曲线、检查器和导出。手动操作与 AI 配置共享状态，帮助通过 `debug_help` 查询。
 - 原生 AI 逻辑区：7 个 `logic_program_*` MCP 工具，支持自定义函数、有界循环、集合/字符串运算、动态对象源、字段读取、绘制和 UI 输出，以及显式启用的带参托管调用、去重与异步回执，不依赖 Lua。
 - IL2CPP：跨 Image 模糊搜索类/方法/字段，字段偏移与类型、完整方法签名、对象字段、数组/List/Dictionary 加载、带参静态/实例方法调用，以及方法 Hook。
+- IL2CPP 符号覆盖：支持为已确认的 API 指定自定义导出名，或明确允许后的模块相对偏移；Web 与 Python／原生 HTTP MCP 均可管理，保存后重启目标生效，不在运行中替换 API。
 - IL2CPP Dump：支持全量、指定类或命名空间，写入目标应用私有目录 `files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs`；MCP 只返回状态、路径和类数量，不返回正文。
 - 非 IL2CPP 内存工具：安全读写映射、模块起止地址/重复实例定位、地址反查、多级指针链、并行基址扫描、字节/类型化搜索及多轮过滤。
 - 内存后端：默认 KittyMemory；WebUI 可选择外部 Root companion 驱动，只接管数据读写、搜索/改善、冻结和指针链。KittyScanner 扫描受控快照；代码补丁、Lua、元数据及反汇编/反编译仍使用本地 KittyMemory，驱动不可用不静默回退。
@@ -27,10 +30,10 @@ https://ifdian.net/a/__mcp/plan
 - 多类型关系链：命名选择集可分批加入任意多个类或字段，支持 `any`、`all`、`ordered` 搜索和最多 15 层的有界路径分析。`ordered` 搜索中首个选择器带字段时，该字段必须成为首边；后续字段选择器表示精确终点。结果中的类、字段、偏移、实例和标量分别提供导航、检查、编辑/冻结或渲染动作，偏移本身不会被误当成绝对地址。
 - Dobby：符号解析、原生地址 Hook、固定返回、Instrument 计数、代码 Patch、Destroy 与 Hook 列表。
 - 动态调试：内置 LuaJIT+FFI、ARM64 AsmJit 汇编、Capstone 反汇编/指令修改、Ghidra C 风格伪代码还原、perf 硬件断点与命中栈回溯、Dobby 追踪回溯。Ghidra 直接读取目标的实时内存以解析只读字符串和全局数据；输入地址精确命中 IL2CPP 方法时自动注入返回值、参数、声明类及实例字段 Offset 类型。
-- 外部暂停调试：Root companion 仅对启动时固定的目标 PID 提供 ARM64 单线程暂停、X0–X30/SP/PC/PSTATE 读取、受校验寄存器写入、单步、帧指针回溯和恢复。它与不暂停进程的 perf 采样断点是两套能力；不提供按地址停止断点、step-over/step-out、FP/SIMD/SVE 或任意 PID 附加，权限只有实际暂停时才能确认，并由 1–15 秒租约和断线清理限制停顿时间。
+- 外部暂停调试：Root companion 仅对启动时固定的目标 PID 提供 ARM64 单线程暂停、X0–X30/SP/PC/PSTATE 读取、可选 FP/SIMD 读取、受校验寄存器写入、按地址停止断点、单步／step-over／step-out、帧指针回溯和恢复。它与不暂停进程的 perf 采样断点是两套能力；实际可用性以返回的权限、硬件槽位和能力状态为准，不提供任意 PID 附加，并由 1–15 秒租约和断线清理限制停顿时间。
 - 调试工作流：MCP 与游戏内“调试项目”页共享持久项目、对象/List/Dictionary/内存快照与差异、后台只读任务、变更记录/受校验撤销和统一停止。项目保存符号配置和笔记，不在重启后重放调用或信任旧对象地址；快照不是全进程一致性快照。
 - 持久日志与诊断：Root companion 把会话日志分卷保存在 `/data/adb/zygisk_il2cpp_mcp/journal/`，目标崩溃或重新启动后仍可从 WebUI 分页查看、筛选、导出或明确确认后清理。诊断包只收集有界日志和模块/后端/系统摘要，不自动收集全系统 logcat、tombstone 或完整内存。
-- MCP 功能控制：各组开关全部默认开启（包含 `native_libraries`），仅通过默认 `127.0.0.1:27185` 浏览器管理页面动态关闭。管理接口不会暴露给 Agent；禁用工具会从 `tools/list` 消失，原始命令也无法绕过对应开关。
+- MCP 功能控制：各组开关默认开启（包含 `native_libraries`）。Python stdio 在默认 `127.0.0.1:27185` 浏览器页面管理；原生 HTTP 在模块 Web「功能开关」管理，保存到手机 Root 持久配置。两个入口分别控制自己的工具目录，禁用工具从 `tools/list` 隐藏并拒绝直接调用；管理接口不暴露给 Agent，不自动撤销已运行任务。
 - ARM64 Ghidra 默认异步预检，SO 装载、初始化和分析在限时工作进程执行，不再加载进 Unity 主进程；失败仅停用反编译。普通 IL2CPP 优先标准 API，其他可选能力按需启用。
 - 自定义 SO：`native_library_inject` 向已连接目标分块上传并显式执行 SO，`native_library_status` 查询结果；校验 ABI/ELF/传输完整性，不需要额外 adb push。自定义代码在目标内运行，可导致崩溃；不提供不安全卸载或任意 PID 附加。
 - JNI Toast：显示当前 MCP tool 与参数，可通过 MCP 开关或主动显示自定义内容。
@@ -47,8 +50,13 @@ WebUI 和 MCP 配置中不包含陀螺仪功能。
 /data/adb/zygisk_il2cpp_mcp/apps.txt
 /data/adb/zygisk_il2cpp_mcp/port.txt
 /data/adb/zygisk_il2cpp_mcp/overlay_enabled.txt
+/data/adb/zygisk_il2cpp_mcp/injection_delay_seconds.txt
+/data/adb/zygisk_il2cpp_mcp/mcp_http_enabled.txt
+/data/adb/zygisk_il2cpp_mcp/mcp_http_token.txt
+/data/adb/zygisk_il2cpp_mcp/mcp_listen_address.txt
 /data/adb/zygisk_il2cpp_mcp/memory_backend.txt
 /data/adb/zygisk_il2cpp_mcp/driver_node.txt
+/data/adb/zygisk_il2cpp_mcp/il2cpp_symbols.txt
 ```
 
 `apps.txt` 每行一个包名，例如：
@@ -58,9 +66,20 @@ com.example.game
 com.example.anothergame
 ```
 
-程序会在目标进程启动时读取配置。修改后请彻底结束并重新启动目标游戏。
+目标注入配置在目标进程启动时读取，修改后请彻底结束并重新启动目标游戏。监听地址或端口变更则需保存并重启设备：Root 网关不会随单个目标退出而重新绑定。
+
+「延迟注入／初始化」从目标进程完成 Zygisk specialization 后的后台线程开始计时。等待结束才启动 Hook、ImGui、命令服务和反编译预检；多个进程分别计时。它不能推迟 Zygisk 框架最初映射引导 SO 的时机，也不按 Activity 切换重新计时。`injection_delay_seconds.txt` 使用 0–3600 的整数秒，非法值回到 0。延迟期间，该目标不会出现在在线进程列表中。
+
+HTTP 默认开启，`mcp_listen_address.txt` 默认 `127.0.0.1`，可在 Web「MCP 连接」→「连接设置」中改为 `0.0.0.0`；只接受这两个值，缺失或非法值回到本机监听。安装器仅在文件缺失时写入默认值，升级保留选择。监听地址或端口变更保存后必须重启设备；仅重启游戏不足以生效。Web「MCP 连接」自动检测手机当前 Wi-Fi／热点 IPv4，并使用 `port.txt` 中的端口生成连接 URL；`0.0.0.0` 只用于监听，不能当作客户端连接地址。没有检测到有效 IPv4 时会明确提示，不猜测或复用旧地址；连上网络后重新检测即可。保持本机监听时，电脑可使用 ADB 端口转发。
+
+`mcp_http_enabled.txt` 设为 `0` 可关闭 HTTP，保存后对新请求生效，不中断已开始的调用；原 Socket 不受影响。安装器创建 256-bit 随机 Bearer 令牌（Root 所有、0600 权限），升级保留；令牌缺失时拒绝 HTTP 访问，不降级为无鉴权。局域网模式只允许经过 Bearer 认证的 HTTP 请求，旧 raw Socket 仍仅接受设备本机连接，Python stdio 配置不变。HTTP 没有 TLS 加密，令牌与请求会明文传输，仅用于可信局域网，不要开放公网或不可信网络。
+
+原生 HTTP 支持 `Expect: 100-continue`：通过报头与认证检查后，在读取非空请求体前返回 `100 Continue`；未知 expectation 仍返回 417。请求仍需 `Content-Length`，不支持 chunked 上传；超限请求直接返回 413，不先返回 100。
+
 WebUI 的“注入 ImGui 窗口”默认开启；关闭并保存后，下次启动不创建 Java 悬浮窗/SurfaceView/ImGui 绘制线程，屏幕对象绘制也停用，MCP 和原生调试仍可使用。配置文件为 `1`（开启）或 `0`（关闭），缺失时默认开启；它不同于 `overlay_set(visible=false)` 临时隐藏窗口。
-`memory_backend.txt` 默认 `system`（KittyMemory），不需要驱动。可在 WebUI 切换外部 Root 驱动，GT1/QX 需在 `driver_node.txt` 填写真实 `/dev/...` 字符设备节点；配置生效需重启目标。外部驱动仅支持 ARM64，权限/内核或协议不匹配时明确报错。WebUI 使用实色扁平化面板
+`memory_backend.txt` 默认 `system`（KittyMemory），不需要驱动。可在 WebUI 切换外部 Root 驱动，GT1/QX 需在 `driver_node.txt` 填写真实 `/dev/...` 字符设备节点；配置生效需重启目标。外部驱动仅支持 ARM64，权限/内核或协议不匹配时明确报错。
+
+`il2cpp_symbols.txt` 默认没有覆盖映射。标准 API、改名 SO 枚举、stripped metadata 只读降级、旧版 API 适配及 Unity 6 GC 句柄兼容继续保留。它不是通用解密器；手工指定符号只应使用已确认的映射，错误签名或偏移仍可能造成崩溃。
 
 ## 游戏内悬浮菜单
 
@@ -105,6 +124,8 @@ http://127.0.0.1:27185/
 ```
 
 开关保存到 `mcp/mcp_features.json`。使用 `--admin-port` 修改端口，使用 `--no-admin` 关闭页面；管理端口监听非本机地址时必须同时配置 `--admin-token`。
+
+使用原生 HTTP 时，在手机模块 Web「功能开关」管理分组，配置保存到 `/data/adb/zygisk_il2cpp_mcp/mcp_features.json`，下次请求生效；客户端可能需要刷新工具列表或重新连接。它与 Python 管理页面的配置分别保存，不会自动互相同步。功能开关不是目标内脚本的安全隔离，也不会撤销已有 Hook 或冻结。
 
 正常构建模块时，`generateMcpArchive` 会从 `mcp/` 源码生成客户端 ZIP，包含渲染/工作台/调试/逻辑以及关系链、暂停调试、任务和工作流工具模块及相关接口文档。WebUI 一键导出的 `MCP.zip` 不再依赖模板中的旧静态压缩包；使用新工具需同时更新设备模块和客户端文件。
 

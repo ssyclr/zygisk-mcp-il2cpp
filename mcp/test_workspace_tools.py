@@ -75,6 +75,15 @@ class WorkspaceToolsTests(unittest.TestCase):
         self.assertEqual(len(names), len(set(names)))
         self.assertFalse(set(names) & {"mcp_admin_info", "mcp_list_features", "mcp_set_all_features", "mcp_set_feature"})
 
+    def test_history_supports_direct_path_selection_without_ambiguous_arguments(self):
+        self.assertEqual(wt.encode("workspace_history",{"index":0}),"WORKSPACE_HISTORY 0")
+        self.assertEqual(wt.encode("workspace_history",{"index":12}),"WORKSPACE_HISTORY 12")
+        self.assertEqual(wt.encode("workspace_history",{"direction":"forward"}),"WORKSPACE_HISTORY forward")
+        self.assertEqual(wt.encode("workspace_state",{"scope":"object"}),"WORKSPACE_STATE object")
+        self.assertEqual(wt.encode("workspace_history",{"index":1,"scope":"object"}),"WORKSPACE_HISTORY 1 object")
+        for args in ({},{"index":-1},{"index":True},{"index":64},{"direction":"back","index":2},{"index":0,"scope":"bad"}):
+            with self.assertRaises(ValueError):wt.encode("workspace_history",args)
+
     def test_frame_calls_are_queued_and_i64_is_exact(self):
         command = wt.encode("il2cpp_field_write", EXAMPLES["il2cpp_field_write"], self.dispatcher._invoke_token)
         native, subcommand, encoded = command.split()

@@ -104,7 +104,7 @@ TOOLS = [
     tool("overlay_reset", "Restore visible Chinese ImGui Classic purple-theme defaults; does not delete render objects."),
     tool("render_status", "Read styles, camera freshness, optional bones capabilities, queued discovery progress and errors. Missing Unity support never disables manual geometry or ImGui.", readonly=True),
     tool("render_set_style", "Set global render appearance: lines/names/distance/count/bones, box none/2d/corner/3d, line_origin top/center/bottom, color RRGGBBAA, thickness .5..10, text_size 10..64, max_distance 1..1e7. Objects update every game frame; legacy sample_hz is ignored. Occlusion sampling has been removed.", setting_properties(STYLE_FIELDS), ("key", "value")),
-    tool("render_list_objects", "List render-only objects, dimensions, sampled positions/age and bone segments (maximum 128). Does not enumerate all game objects; use render_find_objects first.", readonly=True),
+    tool("render_list_objects", "Page registered render-only objects, dimensions, sampled positions/age and bone segments. Default offset=0/limit=256; returns total/returned/has_more. No fixed object capacity; the limit is per response only. Does not enumerate all game objects; use render_find_objects first.", {"offset":{"type":"integer","minimum":0,"maximum":2147483647},"limit":{"type":"integer","minimum":1,"maximum":256}}, readonly=True),
     tool("render_add_object", "Add one visualization with a unique ID. address=0 uses a manual world position and supports non-IL2CPP games with render_set_camera_matrix. A UnityEngine.Object address requires render_bind_update to sample its transform. Boxes are world-axis-aligned with the supplied height/width/depth; does not modify the game.", {"id": ID, "address": ADDRESS, "label": TEXT, "position": VEC3, "height": number(.001, 10000), "width": number(.001, 10000), "depth": number(.001, 10000)}, ("id",)),
     tool("render_update_object", "Change a visualization's enabled flag, UTF-8 label, RRGGBBAA color (00000000 inherits), or positive height/width/depth; never writes the game object.", {"id": ID, **setting_properties(OBJECT_FIELDS)}, ("id", "key", "value")),
     tool("render_set_object_position", "Update a MANUAL object's world position. Live Unity objects are sampled and cannot be moved through this tool.", {"id": ID, "position": VEC3}, ("id", "position")),
@@ -118,10 +118,10 @@ TOOLS = [
     tool("render_bind_update", "Explicitly Dobby-instrument a known, executing IL2CPP MonoBehaviour zero-argument void LateUpdate (preferred), Update or FixedUpdate. Sampling runs at its entry on the game thread, NOT in Java/GLES renderer. Uses weak handles and per-game-frame sampling (Time.frameCount deduplication when available); unavailable APIs return errors without affecting other tools. Only one binding; unbind before changing it.", {"image": TEXT, "namespace": TEXT, "class": ID, "method": enum("LateUpdate", "Update", "FixedUpdate")}, ("image", "class", "method")),
     tool("render_unbind_update", "Remove only the render-owned game-frame hook, release weak handles and expire live camera data. Manual objects/UI keep working."),
     tool("render_binding_status", "Read render frame hook address, sampling thread ID and last sample age. bound=true with no thread means the chosen method has not executed yet.", readonly=True),
-    tool("render_find_objects", "Queue Unity FindObjectsOfType for a class and add up to limit matching UnityEngine.Object visualizations without removing existing entries. Requires render_bind_update. Returns queue acceptance, NOT completion; poll render_status.discovery_pending/last_error, then render_list_objects. Discovery can allocate a Unity array; start with a narrow class. Total registry limit 128.", {"image": TEXT, "namespace": TEXT, "class": ID, "limit": {"type": "integer", "minimum": 1, "maximum": 128}, "include_inactive": {"type": "boolean"}}, ("image", "class")),
-    tool("render_track_class", "Add/update continuous class discovery. Requires frame binding. Up to 16 classes / 128 total objects. One class is rediscovered each game frame in rotation; legacy refresh_ms is accepted but ignored. Discovery preserves existing checkbox selections; select_new controls new objects. Returns configuration acceptance, not discovery completion; inspect render_list_tracked_classes for found/error. IDs cannot be reassigned to a different class without untracking.", {
+    tool("render_find_objects", "Queue Unity FindObjectsOfType for a class; limit=0 (default) means all matches, positive values select fewer matches. No fixed registry capacity. Requires frame binding. Returns acceptance, NOT completion; poll render_status.discovery_pending/last_error, then render_list_objects. Discovery allocates an array; large populations can be costly.", {"image": TEXT, "namespace": TEXT, "class": ID, "limit": {"type": "integer", "minimum": 0, "maximum": 2147483647}, "include_inactive": {"type": "boolean"}}, ("image", "class")),
+    tool("render_track_class", "Add/update continuous class discovery. Requires frame binding. Up to 16 classes; no fixed object capacity. limit=0 (default) means all matches. One class is rediscovered each game frame in rotation; legacy refresh_ms is accepted but ignored. Discovery preserves checkbox selections; select_new controls new objects. Returns acceptance; inspect render_list_tracked_classes for found/error. IDs cannot be reassigned to a different class without untracking.", {
         "id": ID, "image": TEXT, "namespace": TEXT, "class": ID,
-        "limit": {"type": "integer", "minimum": 1, "maximum": 128},
+        "limit": {"type": "integer", "minimum": 0, "maximum": 2147483647},
         "include_inactive": {"type": "boolean"}, "select_new": {"type": "boolean"},
         "refresh_ms": {"type": "integer", "minimum": 1000, "maximum": 60000}}, ("id", "image", "class")),
     tool("render_list_tracked_classes", "Read active class filters, legacy compatibility settings, last discovery count and per-class errors.", readonly=True),
@@ -267,6 +267,8 @@ def encode(name: str, args: dict) -> str:
               "overlay_list_custom_ui": "OVERLAY_CUSTOM_LIST", "overlay_call_logs": "OVERLAY_LOG_LIST",
               "overlay_clear_call_logs": "OVERLAY_LOG_CLEAR", "render_list_primitives": "RENDER_PRIMITIVES",
               "render_clear_primitives": "RENDER_PRIMITIVES_CLEAR"}
+    if name == "render_list_objects" and args:
+        return f"RENDER_OBJECTS {args.get('offset', 0)} {args.get('limit', 256)}"
     if name in simple:
         return simple[name]
     if name in {"overlay_set", "render_set_style", "render_update_object"}:
@@ -301,7 +303,7 @@ def encode(name: str, args: dict) -> str:
         if not args["image"]:
             raise ValueError("tracked class requires an image")
         parts = ["RENDER_TRACK_CLASS", text(args["id"]), text(args["image"]), text(args.get("namespace", "")),
-                 text(args["class"]), args.get("limit", 64), args.get("include_inactive", False),
+                 text(args["class"]), args.get("limit", 0), args.get("include_inactive", False),
                  args.get("select_new", True), args.get("refresh_ms", 2000), "replace"]
     elif name in {"render_untrack_class", "render_refresh_class", "render_remove_primitive"}:
         command = {"render_untrack_class": "RENDER_UNTRACK_CLASS", "render_refresh_class": "RENDER_REFRESH_CLASS",
@@ -316,7 +318,7 @@ def encode(name: str, args: dict) -> str:
     elif name in {"render_bind_update", "render_find_objects"}:
         parts = ["RENDER_BIND_UPDATE" if name == "render_bind_update" else "RENDER_FIND_OBJECTS",
                  text(args["image"]), text(args.get("namespace", "")), text(args["class"])]
-        parts += [text(args["method"]), 0] if name == "render_bind_update" else [args.get("limit", 64), args.get("include_inactive", False)]
+        parts += [text(args["method"]), 0] if name == "render_bind_update" else [args.get("limit", 0), args.get("include_inactive", False)]
     else:
         raise ValueError(f"unimplemented tool {name}")
     return " ".join(token(part) for part in parts)

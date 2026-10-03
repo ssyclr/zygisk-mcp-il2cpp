@@ -1,6 +1,66 @@
 # Zygisk IL2CPP MCP Bridge
 
-当前服务版本：**2.6.2** · 作者：**洋葱落日 && DUM**
+当前服务版本：**2.7.0** · 作者：**洋葱落日 && DUM**
+
+## 原生 HTTP 接入（不需要 Python）
+
+当前源码增加了手机模块内的 Streamable HTTP MCP 入口，与原有 Socket 共用配置端口。重新构建并安装本次模块后，进入模块 Web 菜单「MCP 连接」，复制 HTTP 配置到支持该传输的客户端：
+
+```json
+{
+  "mcpServers": {
+    "zygisk-il2cpp": {
+      "type": "http",
+      "url": "http://127.0.0.1:27184/mcp",
+      "headers": { "Authorization": "Bearer <Web菜单中的连接令牌>" }
+    }
+  }
+}
+```
+
+客户端配置格式各有不同，也可分别填写 URL 和 Authorization 请求头。不要同时填写 Python `command`。默认只监听设备 `127.0.0.1`，设备本机使用无需 ADB；电脑端可使用 `adb forward tcp:27184 tcp:27184`。不提供旧版 HTTP+SSE `/sse` 接口。
+
+需要局域网直连时，在 Web「MCP 连接」→「连接设置」中把监听地址设为 `0.0.0.0`，保存并重启设备。「MCP 连接」自动检测手机当前 Wi-Fi／热点 IPv4，并读取 `port.txt` 中的控制端口，不再要求手填。例如检测到 `192.168.1.100`、配置端口为 `27184` 时，URL 是 `http://192.168.1.100:27184/mcp`，不能用 `0.0.0.0`。没有检测到有效 IPv4 时会显示原因，不伪造连接地址；连接网络后重新检测。令牌不会保存到 WebView 的 localStorage。
+
+监听设置持久化到 `/data/adb/zygisk_il2cpp_mcp/mcp_listen_address.txt`，仅支持 `127.0.0.1` 或 `0.0.0.0`，缺失或非法值回到本机监听。安装器在缺失时创建默认值，升级保留已有选择。监听地址或端口变更必须重启设备：Root 网关不会随单个目标进程退出而重新绑定。
+
+远端只允许经过 Bearer 认证的 HTTP，旧 raw Socket 仍仅接受设备本机连接；下方 Python stdio 配置保持本机或 ADB 转发方式。HTTP 无 TLS，令牌与请求内容以明文传输，只在可信局域网使用，不要暴露到公网或不可信网络。
+
+HTTP 同时提供共享的具名参数工具和原生命令工具，尚不是整套 Python 工具的一比一替换：
+
+- `process_list`、`process_select`、`process_current`：查看和选择进程；每个 HTTP MCP 会话独立，目标退出后不会自动切换。
+- `ping`、`runtime_capabilities`、`debug_help`、`raw_hook_call`：健康检查、兼容能力、帮助和单条原生命令调用。
+- `memory_read`、`memory_write`、`analyze_function`、字符串／引用／调用关系、暂停调试与 `il2cpp_symbols_*` 等共享工具：使用与 Python stdio 相同的工具名和具名参数，不需要手工编码原生命令。
+- `native_…`：从原生 HELP 共享目录生成工具，覆盖 IL2CPP、内存、调试、渲染、UI、项目及关系链等。用 `debug_help {"command":"MEMORY_READ"}` 或完整工具名查看真实参数语法。
+- 位置参数放入 `arguments` 数组；字面值直接传，`{"text":"…"}` 自动转成 UTF-8 hex，`{"json":{…}}` 自动转成 JSON hex。原本只接受一个 JSON 参数的工具直接传 `payload`。64 位地址请使用 `"0x…"` 字符串，避免 JSON 数值精度丢失。
+
+例如：
+
+```text
+native_il2cpp_status {}
+native_il2cpp_images {"arguments":[64]}
+native_il2cpp_classes {"arguments":[{"text":"Assembly-CSharp.dll"},{"text":""},{"text":"Player"},64]}
+native_memory_read {"arguments":["0x12340000",16]}
+native_memory_chain_scan {"payload":{"target_address":"0x12340000","max_depth":5}}
+memory_read {"address":"0x12340000","size":16}
+analyze_function {"address":"0x12340000","decompile":false}
+```
+
+Unity／对象检查和精确托管调用工具自动进入原有游戏帧队列，返回请求 ID 不代表执行完成。继续调用 `native_workspace_result {"arguments":[请求ID]}`，检查 `pending`、`success` 和 `error`，不要重复提交写操作。工具说明中使用 `WORKSPACE_QUERY … <argsHex>` 时，HTTP 工具的 `arguments` 填的是说明中 Args 对应的内层参数，服务器负责外层编码。
+
+HTTP 的共享具名工具直接在原生服务中提供，无需启动 Python。反汇编、反编译、静态分析、文件导出和 `native_library_upload` 分块上传均可使用；能力是否可用以目标返回为准。HTTP 无法读取电脑路径，上传字节由客户端提供，电脑本地文件辅助仍可使用下方 Python stdio 服务。原生 HTTP 的分组开关在模块 Web「功能开关」管理；HTTP 也可在「MCP 连接」页整体关闭，关闭后不会影响旧 Socket 服务。
+
+Web 分组配置保存到 `/data/adb/zygisk_il2cpp_mcp/mcp_features.json`，默认全部开启。保存后下次请求生效，禁用工具会从 `tools/list` 隐藏，直接调用和原始命令也会经过分组检查；客户端可能需要刷新工具列表或重新连接。Python stdio 的浏览器管理器控制其自己的本地配置，两个入口不会自动同步。管理接口不注册为 Agent 工具，关闭分组不会自动撤销已开始的任务，也不等于目标内脚本的安全隔离。
+
+安装器生成独立随机令牌，升级保留，文件为 `/data/adb/zygisk_il2cpp_mcp/mcp_http_token.txt`，Root 所有、0600 权限；切勿把完整配置发到公开反馈。令牌缺失拒绝访问。替换令牌后，旧会话失效，需要重新初始化。会话闲置一小时后过期，同时最多 128 个；初始化响应返回 `MCP-Session-Id`，后续请求携带该头和协商的 `MCP-Protocol-Version`。
+
+传输遵循 [MCP Streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports) 的 JSON 响应模式：POST `/mcp`、`Content-Type: application/json`、`Accept: application/json, text/event-stream`，当前支持 2025-06-18／2025-11-25 协议；GET 返回 405，通知返回 202，DELETE 结束会话。每次 POST 携带单个 JSON-RPC 消息及 `Content-Length`，不接受 chunked 上传或旧协议批处理。HTTP 请求头上限 32 KiB、请求体 1 MiB、原生返回 4 MiB；大结果请分页或导出文件。连接丢失不会重放命令；关闭会话／取消通知不会撤销已经开始的目标操作。
+
+支持 `Expect: 100-continue`（值不区分大小写）：通过报头与认证检查后，在等待非空请求体前返回 `100 Continue`；零长度请求体不发送临时响应。超限请求直接返回 413，认证失败直接返回 401，未知 expectation 返回 417，不会先发送 100 再等待请求体。
+
+## 延迟启动
+
+Web「目标设置」→「启动设置」→「延迟启动（秒）」填 0–3600 秒，保存并重启目标。默认 0。等待结束再启动 Hook、悬浮窗、目标命令服务和反编译预检；计时在独立线程，不阻塞游戏主线程。Zygisk 最初映射引导 SO 仍按框架时机执行，并不被这个选项延迟。进程等待期间尚未注册，暂时无法通过 MCP 选择它；已有其他目标可继续使用。
 
 2.6.2 新增多进程连接与单独子进程注入。Web 配置只保留 `com.example.game:minigame0` 时，不注入该应用主进程或其他子进程；保留 `com.example.game` 则仍匹配整包。
 
@@ -25,9 +85,9 @@
 - `logic_program_*`：自定义函数、有界循环、集合运算与显式开启的带参托管调用。
 - 原有资源、内存、断点、日志与项目工具继续保留；每项用法可通过 `debug_help` 查询。
 
-新兼容路径和复杂加载场景仍需更多设备验证。自定义 SO 会在目标进程执行，不具备反编译工作进程的隔离能力。
+新兼容路径和复杂加载场景仍需更多设备验证。自定义 SO 会在目标进程执行，不具备反编译工作进程的隔离能力；
 
-这是一个仅依赖 Python 标准库的 stdio MCP Server。它通过 ADB 转发连接目标进程内的本地 Socket，并把 IL2CPP、普通 Native 内存、LuaJIT、Dobby、汇编和断点能力暴露为 MCP tools。
+以下是保留的 Python stdio MCP Server，仅依赖标准库。它连接本地 Socket（可按需通过 ADB 转发），并把 IL2CPP、普通 Native 内存、LuaJIT、Dobby、汇编和断点能力暴露为 MCP tools。
 
 ## Start
 
@@ -49,9 +109,9 @@ python mcp/mcp_server.py --port 27184 --direct
 
 2026-09-12 测试反馈修复：指针链批量结果/列表兼容原生数组，输入等待不再阻塞并行推送。此修复仅涉及 MCP Python，更新正在使用的 `mcp` 目录并重启 MCP 进程即可，无需为这几项重新编译或刷入模块。
 
-方法查询诊断：方法查询可自动回传执行阶段，断开时 MCP 错误中包含 `last_native_stage`，无需手工抓 logcat。此项需要新版模块配合；旧模块仍按原查询协议工作。ImGui 注入开关、工作台布局及兼容边界。
+方法查询诊断：方法查询可自动回传执行阶段，断开时 MCP 错误中包含 `last_native_stage`，无需手工抓 logcat。此项需要新版模块配合；旧模块仍按原查询协议工作。
 
-MCP 还会启动独立的浏览器控制页面，默认地址是 `http://127.0.0.1:27185/`。所有功能开关第一次启动时全部开启，页面修改会立即影响 `tools/list` 并保存到 `mcp_features.json`。可用参数：
+Python stdio 服务还会启动独立的浏览器控制页面，默认地址是 `http://127.0.0.1:27185/`。所有功能开关第一次启动时全部开启，页面修改会立即影响该 Python 服务的 `tools/list`，并默认保存到 `mcp/mcp_features.json`。原生 HTTP 使用上面的手机 Web「功能开关」，不需要启动这个 Python 管理器。Python 可用参数：
 
 ```text
 --admin-host 127.0.0.1
@@ -96,6 +156,58 @@ adb forward tcp:<port> tcp:<port>
 ```
 
 ## IL2CPP tools
+
+### IL2CPP 符号覆盖
+
+正常目标不用设置。原有兼容继续保留：标准 API 优先、枚举改名 SO、stripped metadata 只读降级、旧版 API 适配，以及 Unity 6 指针宽度 GC 句柄。自动兼容并不等于万能解密；当导出名被修改且已经确认真实映射时，才需要手工覆盖。
+
+覆盖配置保存在 `/data/adb/zygisk_il2cpp_mcp/il2cpp_symbols.txt`，默认没有映射。支持空行、`#` 注释和 `名称=值`：
+
+```text
+# module 可省略；不指定时保留自动模块识别
+module=libCustomRuntime.so
+il2cpp_domain_get=custom_domain_get
+```
+
+左侧必须是工具支持的 IL2CPP API 名，右侧是目标中的真实导出名；不需要把所有标准 API 原样再写一遍。上述名称仅演示格式，请勿直接当作目标配置。
+
+也可使用模块相对偏移，但必须显式指定 `module` 并加入 `allow_offsets=1`，不能仅依赖自动模块识别：
+
+```text
+module=libCustomRuntime.so
+allow_offsets=1
+il2cpp_domain_get=0x123456
+```
+
+`0x123456` 是从所选模块基址计算的偏移，不是运行时绝对地址，也不是 ELF 文件偏移；这里仅作格式示例。地址位于可执行映射不代表函数签名、ABI 或语义正确，错误映射可能让目标崩溃。不要凭猜测填写偏移。
+
+Python stdio 和原生 HTTP 使用相同的工具名：
+
+| 工具 | 用途 |
+| --- | --- |
+| `il2cpp_symbols_list_apis` | 查看允许覆盖的 API 名称。 |
+| `il2cpp_symbols_get` | 查看本次启动使用的配置与已保存配置，区分正在使用和等待重启生效的内容。 |
+| `il2cpp_symbols_validate` | 只解析和检查配置格式，不调用候选地址，不保存，也不替换当前 API。 |
+| `il2cpp_symbols_set` | `confirm=true` 后保存覆盖配置；重启目标后生效。 |
+| `il2cpp_symbols_reset` | `confirm=true` 后清除覆盖映射；重启目标恢复原有自动识别。 |
+
+工具参数示例（导出名和模块名须替换为目标已确认的值）：
+
+```text
+il2cpp_symbols_get {}
+il2cpp_symbols_list_apis {}
+il2cpp_symbols_validate {"config":"module=libCustomRuntime.so\nil2cpp_domain_get=custom_domain_get\n"}
+il2cpp_symbols_set {"config":"module=libCustomRuntime.so\nil2cpp_domain_get=custom_domain_get\n","confirm":true}
+il2cpp_symbols_reset {"confirm":true}
+```
+
+MCP 中的 `config` 文本上限为 16 KiB；只填写需要覆盖的 API。`validate` 成功只表示格式及允许项检查通过，不代表函数可安全调用。
+
+建议先读取当前配置、查询允许的 API，再校验、确认保存，最后彻底退出并重启目标。不支持热切换当前进程的 API。持久配置供之后启动的目标读取，填写特定目标的映射时，应避免让其他目标带着不匹配的配置启动。完整参数以 `debug_help` 和工具 Schema 为准；这些是用户要求的符号配置工具，不包含功能限制器的管理接口。
+
+Web 也可以编辑同一份符号配置。菜单采用适配手机、平板和大屏的黑白、黑色文字与直角布局，没有阴影、彩色高亮、圆角、渐变或玻璃效果。以上是当前源码的功能说明，需更新手机模块和 MCP 服务后使用；不代表已经覆盖所有设备或混淆版本。
+
+### 查询、调用与 Hook
 
 - `il2cpp_status`：初始化并附加 IL2CPP 线程，返回基址和 domain。
 - `il2cpp_dump_file`：把完整 C# 元数据 Dump 直接写入目标应用私有目录，不通过 MCP 返回 Dump 内容；MCP 只收到 `success`。
@@ -145,7 +257,7 @@ files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs
 
 对应 Android 路径通常位于 `/data/user/0/<目标包名>/files/zygisk_il2cpp_mcp/`。每次生成独立文件，不覆盖旧 Dump；结果只含 `success/path/class_count`，不返回正文。
 
-类型流程图、冻结/追踪管理、多层基址链、批量加载。流程图使用 `il2cpp_type_graph`；已有 Dump、对象检查器和 `memory_scan_base` 均直接扩展，无重复同义工具。
+流程图使用 `il2cpp_type_graph`；已有 Dump、对象检查器和 `memory_scan_base` 均直接扩展，无重复同义工具。
 
 ### 多类型关系链
 
@@ -160,7 +272,7 @@ files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs
 
 原有 38 个渲染/UI 工具继续保留，新增 33 个工作台与高级 UI 工具，共 71 个；接入默认开启的原有功能组，Lua 程序还依赖 `lua`。浏览器管理接口仍不暴露给 Agent。
 
-新增 `overlay_upsert_window/upsert_node/apply_tree` 支持独立父窗口、子窗口、控件树、表格/分页及绑定；`overlay_program_*` 管理可编程 UI。`render_*_rule(s)` 管理字段规则、血条和自动包围盒。工作台新增帧队列检查器/精确调用、符号书签和目标端剪贴板/文件导出。完整参数以 `debug_help` 为准。
+新增 `overlay_upsert_window/upsert_node/apply_tree` 支持独立父窗口、子窗口、控件树、表格/分页及绑定；`overlay_program_*` 管理可编程 UI。`render_*_rule(s)` 管理字段规则、血条和自动包围盒。工作台新增帧队列检查器/精确调用、符号书签和目标端剪贴板/文件导出。
 
 - UI：`overlay_status`、`overlay_set`、`overlay_set_window`、`overlay_reset`，管理中英语言、Classic/Dark/Light 主题、可见性、原生折叠、位置尺寸、缩放和透明度。
 - 对象：`render_status`、`render_list_objects`、`render_add_object`、`render_update_object`、`render_remove_object`、`render_clear_objects`、`render_set_object_position`、`render_set_object_bones`。
@@ -174,7 +286,7 @@ files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs
 
 显示走已有 Java SurfaceView，不 Hook EGL。Java 菜单启动后自动探测已加载 IL2CPP 的 MonoBehaviour 帧方法；检查 `render_binding_status` 的 automatic/auto_error/automatic_probes、thread_id 和 age_ms。探测失败保留普通内存/类型工具；先解除自动探针后仍可通过 `render_bind_update` 手动绑定。`render_find_objects` 返回受理状态，需要轮询结果。普通目标可提供手动坐标、骨骼和相机矩阵；对象操作只改变可视化，不销毁或移动游戏对象。
 
-每条命令可通过 `debug_help` 查询。新工具需要同时更新设备模块与整个 MCP 目录（包括 `render_tools.py`），不能只替换 `mcp_server.py`。
+每条命令可通过 `debug_help` 查询 新工具需要同时更新设备模块与整个 MCP 目录（包括 `render_tools.py`），不能只替换 `mcp_server.py`。
 
 矩阵被裁剪时使用 WorldToScreenPoint；此模式的 `render_project` 返回 pending/request_id，通过 `render_projection_result` 获取结果。所有 Unity 投影仍在游戏帧执行。
 
@@ -183,6 +295,21 @@ files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs
 对象位置和已绑定字段按游戏帧采样，旧 `sample_hz/refresh_ms` 参数保留兼容但不再控制采样周期。`workspace_export_result/text/job/logs` 在目标侧导出，返回状态/路径而非文件正文；文件位于目标 `files/zygisk_il2cpp_mcp/exports`，预设位于 `presets`。预设不会自动恢复游戏动作或运行脚本。
 
 语言、主题、缩放、透明度、Toast 及原生窗口/表格布局自动保存到目标 `files/zygisk_il2cpp_mcp/settings/ui.json` 并加载，不恢复旧对象地址或执行游戏动作。手动浏览器改为场景/IL2CPP 分页表格，检查器、调用与分析各自独立窗口；分析默认自动读取范围，长度选项位于高级设置。
+
+### 实例与集合渲染管理
+
+`render_instance_inventory`、`render_inventory_items`、`render_inventory_set`、`render_inventory_status` 在 Python stdio 和原生 HTTP 中使用相同名称与具名参数，分别用于实时实例/集合表、分页查看元素、批量开启或停止渲染、查询或取消批量任务。请求在目标的游戏帧执行，返回请求 ID 后继续读取 `workspace_result`（Python）或 `native_workspace_result`（HTTP）。
+
+实例表先对全部匹配条目按数量降序排序，再返回指定页，数量相同按条目 ID 排序。回执的 `sort=count_desc`、`count_source=latest_game_frame_scan` 表明数量来自最近一次分帧扫描；UI 和 MCP 使用相同顺序。
+
+```text
+render_instance_inventory {"refresh":true,"query":"NPC","limit":64}
+render_inventory_items {"entry_id":"上一步返回的条目ID","offset":0,"limit":64}
+render_inventory_set {"entry_id":"上一步返回的条目ID","enabled":true}
+render_inventory_status {"task_id":1}
+```
+
+来源限于存活 Unity 对象及其数组/List/Dictionary 字段引用，不执行 GC 堆遍历。渲染对象总数没有固定上限；批量操作分帧处理，`render_inventory_set` 返回 `render_task_id`，继续用 `render_inventory_status` 读取进度，直到 `render_pending=false`。通过 `processed`、`updated`、`skipped`、`truncated` 和 `error` 说明执行情况，取消或错误才标记不完整；`cancel:true` 仅停止未执行部分。`render_list_objects` 按 `offset/limit` 分页返回 `total/returned/has_more`（每页 1..256 条，不限制总数），类发现/跟踪的 `limit=0` 表示全部。条目 ID 不跨进程保存。悬浮窗「渲染 → 所有实例 / 集合」提供相同操作，点击渲染、长按打开对象管理。手机旧模块需要更新才能支持这些工具。
 
 ## Memory tools
 
@@ -311,11 +438,12 @@ WebUI 恢复驱动和设备节点设置，保存后重启目标。驱动由外�
 
 - `debugger_status`：查询 ARM64 支持、拥有的暂停线程、租约和清理状态；状态可用不代表 ptrace 权限已经通过，权限只在实际暂停时确认。
 - `debugger_threads`：分页枚举固定目标的线程，同时返回用于抵抗 TID 重用的 `thread_start_time`；当前请求线程不能由此通道暂停。
-- `debugger_control`：pause/resume/resume_all/step/set_registers/renew/help。暂停必须提交 TID、匹配的启动时间和 `confirm=true`；租约范围 1–15 秒，过期、Broker 断线或所有者退出会触发清理。
-- `debugger_registers`：只读取调试器已拥有并停止的线程，返回 X0–X30、SP、PC、PSTATE、`stop_id` 与剩余租约；读取不会续租。
+- `debugger_control`：pause/resume/resume_all/step/step_over/step_out/continue/set_registers/renew/help。暂停必须提交 TID、匹配的启动时间和 `confirm=true`；租约范围 1–15 秒，过期、Broker 断线或所有者退出会触发清理。`continue` 保留调试器控制至租约到期，`resume` 则解除附加并恢复原硬件断点状态。
+- `debugger_registers`：只读取调试器已拥有并停止的线程，返回 X0–X30、SP、PC、PSTATE、`stop_id` 与剩余租约；可独立返回 Q0–Q31、FPSR／FPCR，读取不会续租。
+- `debugger_breakpoint_set/remove/list/events`：管理已暂停线程的按地址停止断点，读取命中计数和寄存器事件。设置／删除要求当前 `stop_id`、`confirm=true`；设置后显式 `continue` 才会继续运行至命中，条件和跳过命中数见工具帮助。
 - `debugger_backtrace`：读取最多 64 帧的 ARM64 帧指针回溯，并报告不完整原因；省略帧指针或 PAC 可能提前终止。
 
-`step` 和寄存器写入要求当前 `stop_id`，写 PC/SP 还会检查执行/写映射及对齐。当前不提供按地址停止断点、step-over/step-out、FP/SIMD/SVE 寄存器、信号抑制或任意 PID 附加。暂停一个线程时其他线程仍运行，也可能等待它持有的锁；暂停期间不要发起依赖 Unity 游戏帧或目标锁的调用。传输错误后先查 `debugger_status`，不要盲目重复变更命令。
+单步、继续、寄存器写入等变更要求当前 `stop_id` 和确认，写 PC/SP 还会检查执行/写映射及对齐。按地址断点和 step-over／step-out 取决于实际权限及硬件槽位，FP/SIMD 读取独立报告可用状态；不提供 SVE、信号抑制或任意 PID 附加。step-out 会拒绝未映射或带 PAC 的 LR，不猜测返回地址。暂停一个线程时其他线程仍运行，也可能等待它持有的锁；暂停期间不要发起依赖 Unity 游戏帧或目标锁的调用。传输错误后先查 `debugger_status`，不要盲目重复变更命令。
 
 Root 通道允许传输失败后重新鉴权，但不重放已经发送的操作；变更响应丢失标为结果未知。重连保留暂停清理状态，且不会复用旧 perf 事件 ID 或 `stop_id`。仍持有暂停线程时，Root 日志／驱动操作会返回忙，避免慢磁盘阻塞租约清理；应先恢复线程，再查询日志或导出诊断。
 

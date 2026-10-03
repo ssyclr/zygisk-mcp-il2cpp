@@ -22,14 +22,15 @@ from urllib.parse import urlparse
 
 if __package__:
     from . import (render_tools, workspace_tools, debug_tools, logic_tools,
-                   relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools)
+                   relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools, analysis_tools)
 else:
     import render_tools, workspace_tools, debug_tools, logic_tools
     import relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools
+    import analysis_tools
 
 
 SERVER_NAME = "zygisk-il2cpp-mcp"
-SERVER_VERSION = "2.6.2"
+SERVER_VERSION = "2.7.0"
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = {
     "2024-11-05",
@@ -1567,10 +1568,15 @@ TOOLS.extend(paused_debug_tools.TOOLS)
 TOOLS.extend(task_tools.TOOLS)
 TOOLS.extend(workflow_tools.TOOLS)
 TOOLS.extend(native_library_tools.TOOLS)
+_existing_names = {t["name"] for t in TOOLS}
+TOOLS.extend(t for t in analysis_tools.TOOLS if t["name"] not in _existing_names)
+TOOLS = [analysis_tools.BY_NAME.get(t["name"], t) for t in TOOLS]
 TOOL_BY_NAME = {tool["name"].lower(): tool for tool in TOOLS}
 
 
 def tool_features(name: str) -> tuple[str, ...]:
+    if name in analysis_tools.BY_NAME:
+        return analysis_tools.features(name)
     if name in native_library_tools.BY_NAME:
         return ("native_libraries",)
     if name in workflow_tools.BY_NAME:
@@ -1639,6 +1645,10 @@ def tool_features(name: str) -> tuple[str, ...]:
 def raw_command_features(native_name: str) -> tuple[str, ...]:
     """Conservative feature classification for the raw native escape hatch."""
     native_name = native_name.upper()
+    if native_name == "ANALYSIS_QUERY":
+        return ("assembly", "memory_read")
+    if native_name == "CRASH_DIAGNOSE":
+        return ("diagnostics",)
     if native_name == "NATIVE_LIBRARY_CONTROL":
         return ("native_libraries",)
     # Exact extension protocols must run before workspace_tools' generic
@@ -1957,6 +1967,8 @@ class ToolDispatcher:
             method = lambda args: self._workflow_call(name, args)
         if name in native_library_tools.BY_NAME:
             method = lambda args: self._native_library_call(name, args)
+        if name in analysis_tools.BY_NAME and name not in paused_debug_tools.BY_NAME and name not in {"memory_read", "memory_write"}:
+            method = lambda args: self._analysis_call(name, args)
         if method is None:
             raise BridgeError(f"unknown tool: {name}")
         if not isinstance(arguments, dict):
@@ -1979,6 +1991,17 @@ class ToolDispatcher:
                 del self._call_context.config
             else:
                 self._call_context.config = previous
+
+    def _analysis_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            command = analysis_tools.encode(name, arguments)
+            required = analysis_tools.extra_features(name, arguments)
+        except (ValueError, OverflowError, RecursionError) as exc:
+            raise BridgeError(str(exc)) from exc
+        disabled = [f for f in required if not self.registry.enabled(f)]
+        if disabled:
+            raise BridgeError("analysis depends on disabled MCP features: " + ", ".join(disabled))
+        return self._json_call(command, timeout=max(self.config.timeout, 30.0))
 
     def _native_library_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:

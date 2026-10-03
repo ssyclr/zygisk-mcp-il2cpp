@@ -18,14 +18,14 @@ REGISTERS = {"type": "object", "properties": {k: U64 for k in
              [*(f"x{i}" for i in range(31)), "sp", "pc"]},
              "additionalProperties": False, "minProperties": 1, "maxProperties": 33}
 TOOLS = [
-    r.tool("debugger_status", "Read external ARM64 pause-debugger capability and lease state. Separate from perf sampling breakpoints. Does not attach or pause. Permission is unknown until explicit pause; architecture support is not permission proof. Reports owned threads, cleanup status, and unsupported stopping-breakpoint/step-over/out features.", readonly=True),
+    r.tool("debugger_status", "Read external ARM64 stopping-debugger capability, hardware permission state and leases. Separate from perf sampling. No attaching as a side effect.", readonly=True),
     r.tool("debugger_threads", "List threads of the bootstrapped target only; no arbitrary PID. Use tid AND thread_start_time for pause. Thread IDs may be reused. Reports current requester thread, which cannot be paused through this channel.",
            {"offset": integer(0, 2**31-1), "limit": integer(1, 256)}, readonly=True),
-    r.tool("debugger_registers", "Read X0..X30, SP, PC and PSTATE from one debugger-owned stopped ARM64 thread. Returns exact hex strings, stop_id and remaining pause lease; reading does NOT renew the lease. No FP/SIMD/SVE support and no attaching as a side effect.", {"tid": TID}, ("tid",), readonly=True),
+    r.tool("debugger_registers", "Read X0..X30, SP, PC, PSTATE and independently optional Q0..Q31/FPSR/FPCR from an owned stopped ARM64 thread. Exact hex strings, fresh stop_id, unchanged lease. No SVE or automatic attaching.", {"tid": TID}, ("tid",), readonly=True),
     r.tool("debugger_backtrace", "Read a bounded ARM64 frame-pointer backtrace from an owned stopped thread. Reports raw LR, completeness and stop_reason; omitted frame pointers and PAC may stop unwind. No game calls and no lease renewal.",
            {"tid": TID, "max_frames": integer(1, 64)}, ("tid",), readonly=True),
     r.tool("debugger_control", "External root per-thread debugger: op=pause/resume/resume_all/step/set_registers/renew/help. pause requires tid, expected_thread_start_time from debugger_threads and confirm=true; lease_ms defaults 5000, range1000..15000. It affects one thread; others continue or may block on its locks. Reads never extend lease. renew requires tid, current stop_id, lease_ms, confirm=true. step requires tid/current stop_id/confirm=true and does not renew lease. set_registers additionally requires expected_pc and nonempty registers {x0:'0x1',pc:'0x...'}; no PSTATE writes; PC must be executable/aligned, SP aligned/writable. Changes require a fresh stop_id. resume detaches one thread; resume_all releases owned threads without reverting register writes. Pending real signals are preserved. Lease expiry, broker disconnect and owner exit trigger cleanup. No signal suppression, security-policy changes, stopping address breakpoints, step-over/out or arbitrary PID. Calls during pause should avoid game APIs/Unity frame waits. Consult status after transport errors before retrying a mutation.",
-           {"op": r.enum("pause", "resume", "resume_all", "step", "set_registers", "renew", "help"),
+           {"op": r.enum("pause", "resume", "resume_all", "step", "step_over", "step_out", "continue", "set_registers", "renew", "help"),
             "tid": TID, "expected_thread_start_time": U64, "stop_id": U64,
             "lease_ms": integer(1000, 15000), "confirm": {"type": "boolean"},
             "registers": REGISTERS, "expected_pc": U64}, ("op",)),
@@ -59,13 +59,16 @@ def encode(name: str, args: dict) -> str:
             "pause": {"tid", "expected_thread_start_time", "confirm"},
             "resume": {"tid"}, "resume_all": set(), "help": set(),
             "step": {"tid", "stop_id", "confirm"},
+            "step_over": {"tid", "stop_id", "confirm"},
+            "step_out": {"tid", "stop_id", "confirm"},
+            "continue": {"tid", "stop_id", "confirm"},
             "renew": {"tid", "stop_id", "lease_ms", "confirm"},
             "set_registers": {"tid", "stop_id", "confirm", "expected_pc", "registers"},
         }[op] | {"op"}
         allowed = required | ({"lease_ms"} if op == "pause" else set())
         if not required <= data.keys() or not data.keys() <= allowed:
             raise ValueError(f"{op} requires {sorted(required)} and only accepts {sorted(allowed)}")
-        if op in {"pause", "step", "renew", "set_registers"} and data["confirm"] is not True:
+        if op in {"pause", "step", "step_over", "step_out", "continue", "renew", "set_registers"} and data["confirm"] is not True:
             raise ValueError("explicit confirm=true required")
         if op == "set_registers":
             if not data["registers"]:

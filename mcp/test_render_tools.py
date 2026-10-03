@@ -53,7 +53,8 @@ class RenderToolsTests(unittest.TestCase):
 
     def test_all_tools_have_encoders_runtime_routes_and_help(self):
         self.assertEqual(set(rt.BY_NAME), set(EXAMPLES))
-        runtime = (Path(__file__).resolve().parents[1] / "module/src/main/cpp/runtime_bridge.cpp").read_text(encoding="utf-8")
+        cpp = Path(__file__).resolve().parents[1] / "module/src/main/cpp"
+        runtime = (cpp / "runtime_bridge.cpp").read_text(encoding="utf-8") + (cpp / "native_command_catalog.h").read_text(encoding="utf-8")
         for name, args in EXAMPLES.items():
             with self.subTest(name=name):
                 encoded = rt.encode(name, args)
@@ -159,10 +160,23 @@ class RenderToolsTests(unittest.TestCase):
 
     def test_tracking_defaults_and_native_feature_mapping(self):
         encoded = rt.encode("render_track_class", EXAMPLES["render_track_class"]).split()
-        self.assertEqual(encoded[-5:], ["64", "false", "true", "2000", "replace"])
+        self.assertEqual(encoded[-5:], ["0", "false", "true", "2000", "replace"])
         self.assertEqual(len(encoded), 10)
         for name, args in EXAMPLES.items():
             self.assertEqual(rt.native_features(rt.encode(name, args).split()[0]), rt.features(name))
+
+    def test_unlimited_discovery_and_large_user_requested_counts(self):
+        for name in ("render_find_objects","render_track_class"):
+            for limit in (0,129,4096,100000):
+                command=rt.encode(name,{**EXAMPLES[name],"limit":limit}).split()
+                self.assertEqual(command[5] if name=="render_track_class" else command[4],str(limit))
+            with self.assertRaises(ValueError):rt.encode(name,{**EXAMPLES[name],"limit":-1})
+
+    def test_object_paging_is_not_a_registry_capacity_limit(self):
+        self.assertEqual(rt.encode("render_list_objects",{}),"RENDER_OBJECTS")
+        self.assertEqual(rt.encode("render_list_objects",{"offset":4096,"limit":128}),"RENDER_OBJECTS 4096 128")
+        for args in ({"offset":-1},{"limit":0},{"limit":257}):
+            with self.assertRaises(ValueError):rt.encode("render_list_objects",args)
 
 
 if __name__ == "__main__":
