@@ -29,6 +29,8 @@ class AnalysisTools(unittest.TestCase):
         for name,args,op in (
             ("render_instance_inventory",{"refresh":True,"query":"NPC","limit":256},"list"),
             ("render_inventory_items",{"entry_id":"class:0x1000","offset":32},"objects"),
+            ("render_inventory_items",{"entry_id":"class:0x1000","offset":100001},"objects"),
+            ("render_instance_inventory",{"offset":2147483647},"list"),
             ("render_inventory_set",{"entry_id":"collection:0x2000","enabled":False},"render"),
             ("render_inventory_status",{"task_id":12,"cancel":True},"render_status"),
         ):
@@ -43,6 +45,7 @@ class AnalysisTools(unittest.TestCase):
             ("render_instance_inventory",{"limit":257}),
             ("render_instance_inventory",{"refresh":1}),
             ("render_inventory_items",{"entry_id":"x","pid":123}),
+            ("render_inventory_items",{"entry_id":"x","offset":2147483648}),
         ):
             with self.assertRaises(ValueError):a.encode(name,args)
 

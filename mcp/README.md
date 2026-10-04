@@ -1,8 +1,10 @@
 # Zygisk IL2CPP MCP Bridge
 
-当前服务版本：**2.7.6** · 作者：**洋葱落日 && DUM**
+当前服务版本：**2.7.9** · 作者：**洋葱落日 && DUM**
 
-本版补齐字段来源、Unicode 字符串搜索／修改、字符串交叉定位、地址到类／字段及实际内存关系链查询，并支持 `debugger_breakpoint_set.on_hit` 命中寄存器修改。关系链分页不再继续展开已命中的指针终点，断点校验失败会保留具体错误。共享工具同时支持 Python stdio 与原生 HTTP。
+2.7.9 修复原生 HTTP 中部分工具能列出却无法调用的问题，统一游戏帧路由，并保留具体错误和目标进程信息。目标内部 TCP 不可用时支持本地 Unix Socket 降级，连接配置不变。实例与集合工具同步改用完整快照计数、独立集合更新和最新按类查询，说明见 [实例与集合渲染管理](#实例与集合渲染管理)。
+
+字段来源、Unicode 字符串搜索／修改、字符串交叉定位、地址到类／字段及实际内存关系链查询，以及 `debugger_breakpoint_set.on_hit` 命中寄存器修改继续保留。共享工具同时支持 Python stdio 与原生 HTTP。
 
 ## 原生 HTTP 接入（不需要 Python）
 
@@ -33,6 +35,10 @@
 需要免鉴权时，在 Web「MCP 连接」→「连接设置」开启「无需鉴权」并保存；本机 `127.0.0.1` 和局域网 `0.0.0.0` 均支持，不需要重启网关，客户端需重新初始化会话。此时复制的 HTTP 配置只包含 `type`、`url`，不含 `headers.Authorization`，即使没有令牌也能连接。持久化文件为 `/data/adb/zygisk_il2cpp_mcp/mcp_http_auth_required.txt`，`1` 要求鉴权，只有 `0` 关闭；文件缺失、内容非法或权限不安全时默认要求鉴权。切回鉴权后原令牌继续使用。
 
 注意：免鉴权意味着任何能连接该端口的应用或设备都可以调用已开启的工具，包括内存写入和方法调用。功能分组开关、会话、Host／Origin 和请求大小校验仍然有效，但它们不替代身份鉴权；请只在可信环境中明确开启。
+
+通用入口 `native_workspace_query` 本身不会再次入队：例如 `{"arguments":["IL2CPP_METHODS",{"text":"41 - 42 - 16"}]}` 只生成一层 `WORKSPACE_QUERY`。优先使用对应的具名工具，避免手工拼接编码。关系链实时加载和托管字符串修改也会在游戏帧交给各自的处理器执行。
+
+若工具列表中有命令但调用失败，错误返回会保留具体原因，并在 `structuredContent` 附带工具名、原生命令、目标进程及 `error_stage`：`tool_lookup` 表示当前 HTTP 工具名不存在，`target_call` 表示目标调用失败，`game_frame` 表示排队后的执行失败。`native_workspace_result` 在仍等待时不是错误，执行完成且失败时会设置 MCP `isError=true`，保留请求 ID 和原始错误，不自动重试。Unity API 不可用不再统一报成“命令不可用”。更新模块后按安装要求重启设备，再刷新客户端工具列表；旧网关或尚未重启的目标不会自动获得新命令。
 
 HTTP 同时提供共享的具名参数工具和原生命令工具，尚不是整套 Python 工具的一比一替换：
 
@@ -75,6 +81,8 @@ Web「目标设置」→「启动设置」→「延迟启动（秒）」填 0–
 ### 选择目标进程
 
 所有进程共用一个对外控制端口，内部连接按进程隔离，不需要给每个子进程配置 ADB 转发。
+
+未申请 Android `INTERNET` 权限的目标也可连接：目标内部 TCP 不可用时，改走本地 Unix 通道注册到 Root 网关，对外仍使用原端口和鉴权设置，不修改应用权限。注册暂时失败会按退避间隔重试，不再尝试三次后永久离线；此重试仅用于注册，不重放游戏命令。需要更新手机模块并按安装要求重启设备，只有悬浮窗出现并不代表进程已经注册成功。
 
 1. `process_list {}`：查看已成功注册的进程，返回 `pid`、`uid`、`process_name`、`session`。此操作不会切换目标，旧目标退出后仍可使用。
 2. `process_select {"process_name":"com.example.game:minigame0"}`：精确选择子进程。也可传 `pid`，或同时传两者；匹配不唯一时拒绝选择。
@@ -308,7 +316,9 @@ files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs
 
 `render_instance_inventory`、`render_inventory_items`、`render_inventory_set`、`render_inventory_status` 在 Python stdio 和原生 HTTP 中使用相同名称与具名参数，分别用于实时实例/集合表、分页查看元素、批量开启或停止渲染、查询或取消批量任务。请求在目标的游戏帧执行，返回请求 ID 后继续读取 `workspace_result`（Python）或 `native_workspace_result`（HTTP）。
 
-实例表先对全部匹配条目按数量降序排序，再返回指定页，数量相同按条目 ID 排序。回执的 `sort=count_desc`、`count_source=latest_game_frame_scan` 表明数量来自最近一次分帧扫描；UI 和 MCP 使用相同顺序。
+实例表按数量降序分页，同数量按条目 ID 排序。类的数量包含派生类，与「查找渲染实例」采用相同的按类范围；`exact_count` 则只统计当前类型。支持时包含未激活对象，以 `include_inactive_effective` 为准。整轮统计完成后统一更新，刷新期间保留上一轮数量，不再显示扫描到一半的偏小结果。回执提供 `sort=count_desc`、`count_source=completed_unity_snapshot`、`generation`、`sampled_at`、`age_ms` 和 `complete/error`。
+
+集合字段单独分帧解析，不阻塞实例计数；通过 `collections_supported/running/complete/error` 判断集合状态。打开类详情或批量渲染时重新按类查询当前对象，详情返回 `count_source=fresh_type_query` 和采样时间；游戏中的对象实时增减时，两次不同时间的查询仍可能有差异。缺少集合 API 只停用集合扫描，不影响普通类统计。分页不会限制扫描总量。
 
 ```text
 render_instance_inventory {"refresh":true,"query":"NPC","limit":64}
@@ -465,6 +475,14 @@ Root 通道允许传输失败后重新鉴权，但不重放已经发送的操作
 引擎通过受限回调读取目标实时内存，并把 `/proc/self/maps` 中的只读区域传给 Ghidra，用于分析全局数据和已初始化的运行时字符串。函数分析严格限制在请求范围内；范围外直接分支会生成截断桩，不再导致整个反编译请求失败。
 
 当前限制：范围外尾调用可能仍显示为 `halt_missing()`；调用目标尚未批量替换成 IL2CPP 方法名；未初始化的 IL2CPP 编码字符串槽不会自动展开为文本。反编译器缺失、ABI 不兼容或初始化失败只会停用这一功能，不影响内存、Hook、Dobby、Lua 或断点工具。
+
+## 绘制实例查询
+
+绘制的“类跟踪”与 IL2CPP 实例页共用 Unity 对象枚举，默认包含未激活对象。已有跟踪项保留之前的选择，可在该行勾选“未激活”再刷新；同名类还需要确认程序集和命名空间相同。没有可用相机或关闭绘制不影响对象数量查询，但仍需要正常的游戏帧绑定。
+
+一次性查询的错误保存在 `render_status.discovery_error`，不会被后续相机状态覆盖；重新查询或清空渲染列表时重置。
+
+Python 工具 `render_find_objects`／`render_track_class` 默认 `include_inactive=true`；原生 HTTP 的 `native_render_find_objects`／`native_render_track_class` 仍按帮助提供位置参数，传 `true` 可采用同样的范围。`render_list_tracked_classes`／`native_render_tracked_classes` 用 `count_valid`、`pending`、`error` 区分等待、失败与真实数量；未成功查询时 `found=null`，不会显示为 0。旧 Unity 仅支持激活对象时，`include_inactive_effective=false` 明确说明降级范围。查询到实例不等于它一定能绘制：没有 Transform、相机不可用或对象已销毁，仍可能无法投影到屏幕。
 
 ## 原生 AI 逻辑工具
 

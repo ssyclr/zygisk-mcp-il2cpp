@@ -118,13 +118,13 @@ TOOLS = [
     tool("render_bind_update", "Explicitly Dobby-instrument a known, executing IL2CPP MonoBehaviour zero-argument void LateUpdate (preferred), Update or FixedUpdate. Sampling runs at its entry on the game thread, NOT in Java/GLES renderer. Uses weak handles and per-game-frame sampling (Time.frameCount deduplication when available); unavailable APIs return errors without affecting other tools. Only one binding; unbind before changing it.", {"image": TEXT, "namespace": TEXT, "class": ID, "method": enum("LateUpdate", "Update", "FixedUpdate")}, ("image", "class", "method")),
     tool("render_unbind_update", "Remove only the render-owned game-frame hook, release weak handles and expire live camera data. Manual objects/UI keep working."),
     tool("render_binding_status", "Read render frame hook address, sampling thread ID and last sample age. bound=true with no thread means the chosen method has not executed yet.", readonly=True),
-    tool("render_find_objects", "Queue Unity FindObjectsOfType for a class; limit=0 (default) means all matches, positive values select fewer matches. No fixed registry capacity. Requires frame binding. Returns acceptance, NOT completion; poll render_status.discovery_pending/last_error, then render_list_objects. Discovery allocates an array; large populations can be costly.", {"image": TEXT, "namespace": TEXT, "class": ID, "limit": {"type": "integer", "minimum": 0, "maximum": 2147483647}, "include_inactive": {"type": "boolean"}}, ("image", "class")),
-    tool("render_track_class", "Add/update continuous class discovery. Requires frame binding. Up to 16 classes; no fixed object capacity. limit=0 (default) means all matches. One class is rediscovered each game frame in rotation; legacy refresh_ms is accepted but ignored. Discovery preserves checkbox selections; select_new controls new objects. Returns acceptance; inspect render_list_tracked_classes for found/error. IDs cannot be reassigned to a different class without untracking.", {
+    tool("render_find_objects", "Queue Unity FindObjectsOfType for a class; limit=0 (default) means all matches. include_inactive defaults true, matching the IL2CPP instance browser; older Unity may support active objects only. Requires frame binding, not a camera or enabled rendering. Returns acceptance, NOT completion; poll render_status.discovery_pending/discovery_error, then render_list_objects. Discovery allocates an array; large populations can be costly.", {"image": TEXT, "namespace": TEXT, "class": ID, "limit": {"type": "integer", "minimum": 0, "maximum": 2147483647}, "include_inactive": {"type": "boolean", "default": True}}, ("image", "class")),
+    tool("render_track_class", "Add/update continuous class discovery. Requires frame binding. Up to 16 classes; no fixed object capacity. limit=0 (default) means all matches. include_inactive defaults true, matching the IL2CPP instance browser. One class is rediscovered each game frame in rotation; legacy refresh_ms is accepted but ignored. Discovery preserves checkbox selections; select_new controls new objects. Returns acceptance; inspect render_list_tracked_classes for count_valid/pending/found/error and include_inactive_effective. IDs cannot be reassigned to a different class without untracking.", {
         "id": ID, "image": TEXT, "namespace": TEXT, "class": ID,
         "limit": {"type": "integer", "minimum": 0, "maximum": 2147483647},
-        "include_inactive": {"type": "boolean"}, "select_new": {"type": "boolean"},
+        "include_inactive": {"type": "boolean", "default": True}, "select_new": {"type": "boolean"},
         "refresh_ms": {"type": "integer", "minimum": 1000, "maximum": 60000}}, ("id", "image", "class")),
-    tool("render_list_tracked_classes", "Read active class filters, legacy compatibility settings, last discovery count and per-class errors.", readonly=True),
+    tool("render_list_tracked_classes", "Read class filters and count_valid/pending/found/error. found=null before a successful scan or on failure, not zero; include_inactive_effective reports legacy Unity scope fallback. Counts are matching instances, not guaranteed drawable objects.", readonly=True),
     tool("render_untrack_class", "Stop a class tracker and remove only automatic entries exclusively owned by it. Explicit/manual objects survive.", {"id": ID}, ("id",)),
     tool("render_refresh_class", "Request refresh on the next bound game frame; inspect class status for completion.", {"id": ID}, ("id",)),
     tool("render_refresh_cameras", "Queue camera enumeration on the game thread. Falls back to FindObjectsOfType(Camera) if get_allCameras is stripped. Read render_list_cameras for cached names/addresses."),
@@ -303,7 +303,7 @@ def encode(name: str, args: dict) -> str:
         if not args["image"]:
             raise ValueError("tracked class requires an image")
         parts = ["RENDER_TRACK_CLASS", text(args["id"]), text(args["image"]), text(args.get("namespace", "")),
-                 text(args["class"]), args.get("limit", 0), args.get("include_inactive", False),
+                 text(args["class"]), args.get("limit", 0), args.get("include_inactive", True),
                  args.get("select_new", True), args.get("refresh_ms", 2000), "replace"]
     elif name in {"render_untrack_class", "render_refresh_class", "render_remove_primitive"}:
         command = {"render_untrack_class": "RENDER_UNTRACK_CLASS", "render_refresh_class": "RENDER_REFRESH_CLASS",
@@ -318,7 +318,7 @@ def encode(name: str, args: dict) -> str:
     elif name in {"render_bind_update", "render_find_objects"}:
         parts = ["RENDER_BIND_UPDATE" if name == "render_bind_update" else "RENDER_FIND_OBJECTS",
                  text(args["image"]), text(args.get("namespace", "")), text(args["class"])]
-        parts += [text(args["method"]), 0] if name == "render_bind_update" else [args.get("limit", 0), args.get("include_inactive", False)]
+        parts += [text(args["method"]), 0] if name == "render_bind_update" else [args.get("limit", 0), args.get("include_inactive", True)]
     else:
         raise ValueError(f"unimplemented tool {name}")
     return " ".join(token(part) for part in parts)

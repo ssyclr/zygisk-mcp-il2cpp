@@ -70,7 +70,7 @@ class RenderToolsTests(unittest.TestCase):
         self.assertEqual(bytes.fromhex(encoded[1]).decode(), "测试 对象")
         self.assertEqual(bytes.fromhex(encoded[3]).decode(), "Player 中文")
         self.assertEqual(rt.encode("render_find_objects", EXAMPLES["render_find_objects"]).split()[2], "-")
-        self.assertEqual(rt.encode("render_find_objects", EXAMPLES["render_find_objects"]).split()[-1], "false")
+        self.assertEqual(rt.encode("render_find_objects", EXAMPLES["render_find_objects"]).split()[-1], "true")
 
     def test_matrix_layout_and_manual_bone_arity(self):
         self.assertEqual(len(rt.encode("render_set_camera_matrix", EXAMPLES["render_set_camera_matrix"]).split()), 24)
@@ -160,10 +160,16 @@ class RenderToolsTests(unittest.TestCase):
 
     def test_tracking_defaults_and_native_feature_mapping(self):
         encoded = rt.encode("render_track_class", EXAMPLES["render_track_class"]).split()
-        self.assertEqual(encoded[-5:], ["0", "false", "true", "2000", "replace"])
+        self.assertEqual(encoded[-5:], ["0", "true", "true", "2000", "replace"])
         self.assertEqual(len(encoded), 10)
         for name, args in EXAMPLES.items():
             self.assertEqual(rt.native_features(rt.encode(name, args).split()[0]), rt.features(name))
+
+    def test_inactive_default_matches_instance_browser_but_explicit_false_is_preserved(self):
+        for name in ("render_find_objects", "render_track_class"):
+            position = 6 if name == "render_track_class" else 5
+            self.assertEqual(rt.encode(name, EXAMPLES[name]).split()[position], "true")
+            self.assertEqual(rt.encode(name, {**EXAMPLES[name], "include_inactive": False}).split()[position], "false")
 
     def test_unlimited_discovery_and_large_user_requested_counts(self):
         for name in ("render_find_objects","render_track_class"):
