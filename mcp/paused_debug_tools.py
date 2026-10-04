@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 try:
     from . import render_tools as r
+    from . import register_tools
 except ImportError:
     import render_tools as r
+    import register_tools
 
 
 def integer(low: int, high: int) -> dict:
@@ -14,17 +16,15 @@ def integer(low: int, high: int) -> dict:
 U64 = {"type": "string", "minLength": 1, "maxLength": 20,
        "description": "Exact unsigned decimal or 0x hexadecimal string, never a JSON number."}
 TID = integer(1, 2**31 - 1)
-REGISTERS = {"type": "object", "properties": {k: U64 for k in
-             [*(f"x{i}" for i in range(31)), "sp", "pc"]},
-             "additionalProperties": False, "minProperties": 1, "maxProperties": 33}
+REGISTERS = register_tools.schema()
 TOOLS = [
     r.tool("debugger_status", "Read external ARM64 stopping-debugger capability, hardware permission state and leases. Separate from perf sampling. No attaching as a side effect.", readonly=True),
     r.tool("debugger_threads", "List threads of the bootstrapped target only; no arbitrary PID. Use tid AND thread_start_time for pause. Thread IDs may be reused. Reports current requester thread, which cannot be paused through this channel.",
            {"offset": integer(0, 2**31-1), "limit": integer(1, 256)}, readonly=True),
-    r.tool("debugger_registers", "Read X0..X30, SP, PC, PSTATE and independently optional Q0..Q31/FPSR/FPCR from an owned stopped ARM64 thread. Exact hex strings, fresh stop_id, unchanged lease. No SVE or automatic attaching.", {"tid": TID}, ("tid",), readonly=True),
+    r.tool("debugger_registers", "Read X0..X30, SP, PC, PSTATE and independently optional Q0..Q31/FPSR/FPCR, TLS and active SVE Z/P/FFR from an owned stopped ARM64 thread. Exact hex strings, fresh stop_id, unchanged lease. Extended data has a byte budget and explicit truncation. No automatic attaching or enabling CPU extensions.", {"tid": TID}, ("tid",), readonly=True),
     r.tool("debugger_backtrace", "Read a bounded ARM64 frame-pointer backtrace from an owned stopped thread. Reports raw LR, completeness and stop_reason; omitted frame pointers and PAC may stop unwind. No game calls and no lease renewal.",
            {"tid": TID, "max_frames": integer(1, 64)}, ("tid",), readonly=True),
-    r.tool("debugger_control", "External root per-thread debugger: op=pause/resume/resume_all/step/set_registers/renew/help. pause requires tid, expected_thread_start_time from debugger_threads and confirm=true; lease_ms defaults 5000, range1000..15000. It affects one thread; others continue or may block on its locks. Reads never extend lease. renew requires tid, current stop_id, lease_ms, confirm=true. step requires tid/current stop_id/confirm=true and does not renew lease. set_registers additionally requires expected_pc and nonempty registers {x0:'0x1',pc:'0x...'}; no PSTATE writes; PC must be executable/aligned, SP aligned/writable. Changes require a fresh stop_id. resume detaches one thread; resume_all releases owned threads without reverting register writes. Pending real signals are preserved. Lease expiry, broker disconnect and owner exit trigger cleanup. No signal suppression, security-policy changes, stopping address breakpoints, step-over/out or arbitrary PID. Calls during pause should avoid game APIs/Unity frame waits. Consult status after transport errors before retrying a mutation.",
+    r.tool("debugger_control", "External root per-thread debugger: op=pause/resume/resume_all/step/step_over/step_out/continue/set_registers/renew/help. pause requires tid, expected_thread_start_time from debugger_threads and confirm=true; lease_ms defaults 5000, range1000..15000. One thread only; other threads may block on its locks. Reads never extend lease. Stopped-state mutations require current stop_id and confirm=true. set_registers also requires expected_pc and registers: X/W, PC/SP, FP/LR, Q/V/D/S/H/B, FPSR/FPCR, NZCV (only flags writable in PSTATE), TLS and active SVE Z/P/FFR; float values for S/D use 'float:1.5', others exact hex/decimal bits. Aliases may not overlap. PC must be executable/aligned, SP aligned/writable. Writes are read back and rollback attempted on failure. Missing extensions fail without disabling GPR operations. resume detaches; continue keeps owned breakpoints until the unchanged lease expires. Lease/disconnect/owner-exit cleanup preserves real signals and does not revert successful register edits. No privileged registers, forced CPU modes, security-policy changes or arbitrary PID. Use debugger_breakpoint_set.on_hit for automatic matched-hit edits. Avoid game API/frame waits while paused; inspect status after uncertain transport outcomes before retrying.",
            {"op": r.enum("pause", "resume", "resume_all", "step", "step_over", "step_out", "continue", "set_registers", "renew", "help"),
             "tid": TID, "expected_thread_start_time": U64, "stop_id": U64,
             "lease_ms": integer(1000, 15000), "confirm": {"type": "boolean"},
@@ -73,7 +73,7 @@ def encode(name: str, args: dict) -> str:
         if op == "set_registers":
             if not data["registers"]:
                 raise ValueError("registers must not be empty")
-            data["registers"] = {key: _u64(value, key) for key, value in data["registers"].items()}
+            data["registers"] = register_tools.normalize(data["registers"])
             for key, alignment in (("pc", 4), ("sp", 16)):
                 if key in data["registers"]:
                     value = int(data["registers"][key], 16)

@@ -30,7 +30,7 @@ else:
 
 
 SERVER_NAME = "zygisk-il2cpp-mcp"
-SERVER_VERSION = "2.7.0"
+SERVER_VERSION = "2.7.6"
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = {
     "2024-11-05",
@@ -1651,6 +1651,17 @@ def raw_command_features(native_name: str) -> tuple[str, ...]:
         return ("diagnostics",)
     if native_name == "NATIVE_LIBRARY_CONTROL":
         return ("native_libraries",)
+    evidence = {
+        "MEMORY_STRING_SEARCH": ("memory_search", "memory_read", "il2cpp_metadata", "il2cpp_objects"),
+        "MEMORY_STRING_XREFS": ("assembly", "memory_read", "il2cpp_metadata", "il2cpp_objects"),
+        "MEMORY_STRING_WRITE": ("memory_read", "memory_write", "il2cpp_metadata", "il2cpp_objects", "il2cpp_invoke"),
+        "IL2CPP_STRING_SET_SAFE": ("memory_read", "memory_write", "il2cpp_metadata", "il2cpp_objects", "il2cpp_invoke"),
+        "IL2CPP_FIELD_ACTIVITY": ("il2cpp_metadata", "il2cpp_objects", "memory_read", "assembly", "breakpoint"),
+        "IL2CPP_ADDRESS_RESOLVE": ("il2cpp_metadata", "il2cpp_objects", "memory_read"),
+        "MEMORY_ADDRESS_RELATIONS": ("il2cpp_metadata", "il2cpp_objects", "pointer_chain", "memory_read"),
+    }
+    if native_name in evidence:
+        return evidence[native_name]
     # Exact extension protocols must run before workspace_tools' generic
     # WORKSPACE_* fallback.
     exact = (logic_tools.native_features(native_name) or debug_tools.native_features(native_name) or

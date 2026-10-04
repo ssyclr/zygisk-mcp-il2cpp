@@ -13,7 +13,7 @@ https://ifdian.net/a/__mcp/plan
 
 - 通过持久目录中的 `apps.txt` 配置多个目标：不带冒号的包名匹配主进程及子进程；带冒号的完整名称仅匹配指定子进程。
 - 通过持久目录中的 `port.txt` 自定义 MCP/命令 Socket 端口，默认 `27184`。
-- 原生 HTTP MCP 与旧 Socket 共用端口；HTTP 客户端使用 Bearer 令牌，每个会话独立选择进程。Python stdio 方式继续保留。
+- 原生 HTTP MCP 与旧 Socket 共用端口；HTTP 默认使用 Bearer 令牌，可在 Web 手动开启无需鉴权，每个会话独立选择进程。Python stdio 方式继续保留。
 - Web 可设置延迟注入／初始化，0–3600 秒，默认 0；等待在后台线程执行，不阻塞游戏启动线程。
 - 由 Zygisk Root companion 读取配置并通过 IPC 传给目标进程，兼容应用进程无法访问 `/data/adb` 的环境。
 - KernelSU/Magisk 黑白极简 WebUI：添加/移除多个包名、修改端口、连接检测、自动获取局域网连接地址、复制 MCP 配置、一键导出 `MCP.zip`；适配手机、平板和大屏。
@@ -30,7 +30,8 @@ https://ifdian.net/a/__mcp/plan
 - 多类型关系链：命名选择集可分批加入任意多个类或字段，支持 `any`、`all`、`ordered` 搜索和最多 15 层的有界路径分析。`ordered` 搜索中首个选择器带字段时，该字段必须成为首边；后续字段选择器表示精确终点。结果中的类、字段、偏移、实例和标量分别提供导航、检查、编辑/冻结或渲染动作，偏移本身不会被误当成绝对地址。
 - Dobby：符号解析、原生地址 Hook、固定返回、Instrument 计数、代码 Patch、Destroy 与 Hook 列表。
 - 动态调试：内置 LuaJIT+FFI、ARM64 AsmJit 汇编、Capstone 反汇编/指令修改、Ghidra C 风格伪代码还原、perf 硬件断点与命中栈回溯、Dobby 追踪回溯。Ghidra 直接读取目标的实时内存以解析只读字符串和全局数据；输入地址精确命中 IL2CPP 方法时自动注入返回值、参数、声明类及实例字段 Offset 类型。
-- 外部暂停调试：Root companion 仅对启动时固定的目标 PID 提供 ARM64 单线程暂停、X0–X30/SP/PC/PSTATE 读取、可选 FP/SIMD 读取、受校验寄存器写入、按地址停止断点、单步／step-over／step-out、帧指针回溯和恢复。它与不暂停进程的 perf 采样断点是两套能力；实际可用性以返回的权限、硬件槽位和能力状态为准，不提供任意 PID 附加，并由 1–15 秒租约和断线清理限制停顿时间。
+- 外部暂停调试：Root companion 仅对启动时固定的目标 PID 提供 ARM64 单线程暂停、通用／FP／SIMD／TLS 及已启用 SVE 寄存器检查与受校验写入、按地址停止断点及命中寄存器修改、单步／step-over／step-out、帧指针回溯和恢复。它与不暂停进程的 perf 采样断点是两套能力；实际可用性以返回的权限、硬件槽位和扩展状态为准，不提供任意 PID 附加，并由 1–15 秒租约和断线清理限制停顿时间。
+- 字段与地址分析：`field_activity` 结合静态候选与外部数据监视点分析字段来源；字符串支持 Unicode 搜索、受校验修改、代码／字段交叉定位；地址支持类／字段定位与实际内存关系链续扫。
 - 调试工作流：MCP 与游戏内“调试项目”页共享持久项目、对象/List/Dictionary/内存快照与差异、后台只读任务、变更记录/受校验撤销和统一停止。项目保存符号配置和笔记，不在重启后重放调用或信任旧对象地址；快照不是全进程一致性快照。
 - 持久日志与诊断：Root companion 把会话日志分卷保存在 `/data/adb/zygisk_il2cpp_mcp/journal/`，目标崩溃或重新启动后仍可从 WebUI 分页查看、筛选、导出或明确确认后清理。诊断包只收集有界日志和模块/后端/系统摘要，不自动收集全系统 logcat、tombstone 或完整内存。
 - MCP 功能控制：各组开关默认开启（包含 `native_libraries`）。Python stdio 在默认 `127.0.0.1:27185` 浏览器页面管理；原生 HTTP 在模块 Web「功能开关」管理，保存到手机 Root 持久配置。两个入口分别控制自己的工具目录，禁用工具从 `tools/list` 隐藏并拒绝直接调用；管理接口不暴露给 Agent，不自动撤销已运行任务。
@@ -52,6 +53,7 @@ WebUI 和 MCP 配置中不包含陀螺仪功能。
 /data/adb/zygisk_il2cpp_mcp/overlay_enabled.txt
 /data/adb/zygisk_il2cpp_mcp/injection_delay_seconds.txt
 /data/adb/zygisk_il2cpp_mcp/mcp_http_enabled.txt
+/data/adb/zygisk_il2cpp_mcp/mcp_http_auth_required.txt
 /data/adb/zygisk_il2cpp_mcp/mcp_http_token.txt
 /data/adb/zygisk_il2cpp_mcp/mcp_listen_address.txt
 /data/adb/zygisk_il2cpp_mcp/memory_backend.txt
@@ -72,7 +74,11 @@ com.example.anothergame
 
 HTTP 默认开启，`mcp_listen_address.txt` 默认 `127.0.0.1`，可在 Web「MCP 连接」→「连接设置」中改为 `0.0.0.0`；只接受这两个值，缺失或非法值回到本机监听。安装器仅在文件缺失时写入默认值，升级保留选择。监听地址或端口变更保存后必须重启设备；仅重启游戏不足以生效。Web「MCP 连接」自动检测手机当前 Wi-Fi／热点 IPv4，并使用 `port.txt` 中的端口生成连接 URL；`0.0.0.0` 只用于监听，不能当作客户端连接地址。没有检测到有效 IPv4 时会明确提示，不猜测或复用旧地址；连上网络后重新检测即可。保持本机监听时，电脑可使用 ADB 端口转发。
 
-`mcp_http_enabled.txt` 设为 `0` 可关闭 HTTP，保存后对新请求生效，不中断已开始的调用；原 Socket 不受影响。安装器创建 256-bit 随机 Bearer 令牌（Root 所有、0600 权限），升级保留；令牌缺失时拒绝 HTTP 访问，不降级为无鉴权。局域网模式只允许经过 Bearer 认证的 HTTP 请求，旧 raw Socket 仍仅接受设备本机连接，Python stdio 配置不变。HTTP 没有 TLS 加密，令牌与请求会明文传输，仅用于可信局域网，不要开放公网或不可信网络。
+`mcp_http_enabled.txt` 设为 `0` 可关闭 HTTP，保存后对新请求生效，不中断已开始的调用；原 Socket 不受影响。安装器创建 256-bit 随机 Bearer 令牌（Root 所有、0600 权限），升级保留。默认要求鉴权；令牌缺失时拒绝 HTTP 访问，不会自动降级。
+
+Web「MCP 连接」→「连接设置」可开启「无需鉴权」，对 `127.0.0.1` 和 `0.0.0.0` 均有效。对应 `mcp_http_auth_required.txt`：`1` 要求令牌，只有明确的 `0` 才关闭鉴权；缺失、非法内容或不安全的文件权限均保留鉴权。保存后对新请求生效，切换模式会使旧会话失效，客户端需重新连接；复制的免鉴权配置不包含 `Authorization`。此选项不会改变监听范围，也不会删除原令牌。
+
+免鉴权时，任何能连接端口的应用或设备都可调用已开启的工具，包括内存写入和方法调用。远端仍只能使用 HTTP，旧 raw Socket 仅接受设备本机连接，Python stdio 配置不变。HTTP 没有 TLS 加密，仅用于可信环境，不要开放公网或不可信网络。
 
 原生 HTTP 支持 `Expect: 100-continue`：通过报头与认证检查后，在读取非空请求体前返回 `100 Continue`；未知 expectation 仍返回 417。请求仍需 `Content-Length`，不支持 chunked 上传；超限请求直接返回 413，不先返回 100。
 
@@ -83,7 +89,7 @@ WebUI 的“注入 ImGui 窗口”默认开启；关闭并保存后，下次启�
 
 ## 游戏内悬浮菜单
 
-目标进程注入后，菜单在前台 Activity 就绪时显示，标题为 `il2cpp mcp tg@il2cppmcp`。保留 ImGui 原生标题栏移动、三角折叠/展开与边框缩放；横屏浏览与详情分窗，竖屏使用接近屏宽的可切换窗口。
+目标进程注入后，菜单在前台 Activity 就绪时显示，标题为 `IL2CPP MCP v2.7.6 TG:@il2cppmcp QQ:276342773`。保留 ImGui 原生标题栏移动、三角折叠/展开与边框缩放；横屏浏览与详情分窗，竖屏使用接近屏宽的可切换窗口。
 
 - **场景**：表格形式的场景/对象树，箭头展开、名称打开独立检查器；支持分页、重试和缺失场景接口的降级查询。
 - **IL2CPP**：程序集/类列表与可展开方法面板；单击类打开独立类型标签页，双击或“独立类型详情”打开新窗口。支持上下排列/左右分栏、方法调用/固定返回/追踪/断点/分析入口、独立对象选择窗，并自动带入选中实例。字段值、字段类型路径导航、类/命名空间 Dump 与关系流程图保留。

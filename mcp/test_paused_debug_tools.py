@@ -47,7 +47,7 @@ class PausedDebuggerTools(unittest.TestCase):
 
     def test_only_supported_register_writes(self):
         args = {"op": "set_registers", "tid": 10, "stop_id": "1", "expected_pc": "0x1000", "confirm": True}
-        for regs in ({}, {"x31": "0"}, {"pstate": "0"}, {"v0": "0"}, {"pc": "0x1001"}, {"sp": "0x1234"}):
+        for regs in ({}, {"x31": "0"}, {"pstate": 0}, {"v0": "0x"+"f"*33}, {"pc": "0x1001"}, {"sp": "0x1234"}):
             with self.assertRaises(ValueError): decoded("debugger_control", {**args, "registers": regs})
 
     def test_resume_does_not_require_confirmation(self):

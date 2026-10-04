@@ -1,6 +1,8 @@
 # Zygisk IL2CPP MCP Bridge
 
-当前服务版本：**2.7.0** · 作者：**洋葱落日 && DUM**
+当前服务版本：**2.7.6** · 作者：**洋葱落日 && DUM**
+
+本版补齐字段来源、Unicode 字符串搜索／修改、字符串交叉定位、地址到类／字段及实际内存关系链查询，并支持 `debugger_breakpoint_set.on_hit` 命中寄存器修改。关系链分页不再继续展开已命中的指针终点，断点校验失败会保留具体错误。共享工具同时支持 Python stdio 与原生 HTTP。
 
 ## 原生 HTTP 接入（不需要 Python）
 
@@ -25,6 +27,12 @@
 监听设置持久化到 `/data/adb/zygisk_il2cpp_mcp/mcp_listen_address.txt`，仅支持 `127.0.0.1` 或 `0.0.0.0`，缺失或非法值回到本机监听。安装器在缺失时创建默认值，升级保留已有选择。监听地址或端口变更必须重启设备：Root 网关不会随单个目标进程退出而重新绑定。
 
 远端只允许经过 Bearer 认证的 HTTP，旧 raw Socket 仍仅接受设备本机连接；下方 Python stdio 配置保持本机或 ADB 转发方式。HTTP 无 TLS，令牌与请求内容以明文传输，只在可信局域网使用，不要暴露到公网或不可信网络。
+
+远端只允许 HTTP，默认要求 Bearer 令牌；旧 raw Socket 仍仅接受设备本机连接，下方 Python stdio 配置保持本机或 ADB 转发方式。HTTP 无 TLS，令牌与请求内容以明文传输，只在可信环境使用，不要暴露到公网或不可信网络。
+
+需要免鉴权时，在 Web「MCP 连接」→「连接设置」开启「无需鉴权」并保存；本机 `127.0.0.1` 和局域网 `0.0.0.0` 均支持，不需要重启网关，客户端需重新初始化会话。此时复制的 HTTP 配置只包含 `type`、`url`，不含 `headers.Authorization`，即使没有令牌也能连接。持久化文件为 `/data/adb/zygisk_il2cpp_mcp/mcp_http_auth_required.txt`，`1` 要求鉴权，只有 `0` 关闭；文件缺失、内容非法或权限不安全时默认要求鉴权。切回鉴权后原令牌继续使用。
+
+注意：免鉴权意味着任何能连接该端口的应用或设备都可以调用已开启的工具，包括内存写入和方法调用。功能分组开关、会话、Host／Origin 和请求大小校验仍然有效，但它们不替代身份鉴权；请只在可信环境中明确开启。
 
 HTTP 同时提供共享的具名参数工具和原生命令工具，尚不是整套 Python 工具的一比一替换：
 
@@ -434,16 +442,16 @@ WebUI 恢复驱动和设备节点设置，保存后重启目标。驱动由外�
 
 ### 外部暂停调试器
 
-暂停调试器由目标进程外的 Root companion 执行，只允许启动时已绑定的目标 PID，与上面的 perf 采样断点互相独立：
+暂停调试器由目标进程外的 Root companion 执行，只允许启动时已绑定的目标 PID，与上面的 perf 采样断点互相独立。新增字段来源、字符串和地址关系，这些共享工具同时提供 Python stdio 和原生 HTTP MCP：
 
 - `debugger_status`：查询 ARM64 支持、拥有的暂停线程、租约和清理状态；状态可用不代表 ptrace 权限已经通过，权限只在实际暂停时确认。
 - `debugger_threads`：分页枚举固定目标的线程，同时返回用于抵抗 TID 重用的 `thread_start_time`；当前请求线程不能由此通道暂停。
 - `debugger_control`：pause/resume/resume_all/step/step_over/step_out/continue/set_registers/renew/help。暂停必须提交 TID、匹配的启动时间和 `confirm=true`；租约范围 1–15 秒，过期、Broker 断线或所有者退出会触发清理。`continue` 保留调试器控制至租约到期，`resume` 则解除附加并恢复原硬件断点状态。
-- `debugger_registers`：只读取调试器已拥有并停止的线程，返回 X0–X30、SP、PC、PSTATE、`stop_id` 与剩余租约；可独立返回 Q0–Q31、FPSR／FPCR，读取不会续租。
-- `debugger_breakpoint_set/remove/list/events`：管理已暂停线程的按地址停止断点，读取命中计数和寄存器事件。设置／删除要求当前 `stop_id`、`confirm=true`；设置后显式 `continue` 才会继续运行至命中，条件和跳过命中数见工具帮助。
+- `debugger_registers`：只读取调试器已拥有并停止的线程，返回 X0–X30、SP、PC、PSTATE、`stop_id` 与剩余租约；可独立返回 Q0–Q31、FPSR／FPCR、TLS 和已启用的 SVE，读取不会续租。
+- `debugger_breakpoint_set/remove/list/events`：管理已暂停线程的按地址停止断点，读取命中计数和寄存器事件。`on_hit={registers:{w0:"0x1",s1:"float:1.5"},continue:false}` 支持匹配命中后修改、回读和失败回滚。设置／删除要求当前 `stop_id`、`confirm=true`；设置后显式 `continue` 才会继续运行至命中。
 - `debugger_backtrace`：读取最多 64 帧的 ARM64 帧指针回溯，并报告不完整原因；省略帧指针或 PAC 可能提前终止。
 
-单步、继续、寄存器写入等变更要求当前 `stop_id` 和确认，写 PC/SP 还会检查执行/写映射及对齐。按地址断点和 step-over／step-out 取决于实际权限及硬件槽位，FP/SIMD 读取独立报告可用状态；不提供 SVE、信号抑制或任意 PID 附加。step-out 会拒绝未映射或带 PAC 的 LR，不猜测返回地址。暂停一个线程时其他线程仍运行，也可能等待它持有的锁；暂停期间不要发起依赖 Unity 游戏帧或目标锁的调用。传输错误后先查 `debugger_status`，不要盲目重复变更命令。
+单步、继续、寄存器写入等变更要求当前 `stop_id` 和确认，写 PC/SP 还会检查执行/写映射及对齐。支持 X/W、FP/LR、Q/V/D/S/H/B、FPSR/FPCR、NZCV、TLS 和内核已启用的 SVE Z/P/FFR；PSTATE 只允许改变 NZCV，不强制切换 CPU 模式，不支持特权系统寄存器或 SME。内核不提供扩展状态时仅拒绝相应操作，不停用其他功能。命中动作不延长租约；失败保持暂停直到用户处理或租约清理。step-out 拒绝未映射或带 PAC 的 LR。暂停期间避免依赖游戏线程／目标锁的调用；传输错误后先查状态，不盲目重复变更。
 
 Root 通道允许传输失败后重新鉴权，但不重放已经发送的操作；变更响应丢失标为结果未知。重连保留暂停清理状态，且不会复用旧 perf 事件 ID 或 `stop_id`。仍持有暂停线程时，Root 日志／驱动操作会返回忙，避免慢磁盘阻塞租约清理；应先恢复线程，再查询日志或导出诊断。
 
