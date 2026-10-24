@@ -1,6 +1,6 @@
 {
-  "version": "v2.8.3",
-  "versionCode": 283,
-  "zipUrl": "https://github.com/ssyclr/zygisk-mcp-il2cpp/releases/download/v2.8.3/zygisk-il2cpp-mcp-v2.8.3-release.zip",
+  "version": "v2.9.0",
+  "versionCode": 291,
+  "zipUrl": "https://github.com/ssyclr/zygisk-mcp-il2cpp/releases/download/v2.9.0/zygisk-il2cpp-mcp-v2.9.0-release.zip",
   "changelog": "https://raw.githubusercontent.com/ssyclr/zygisk-mcp-il2cpp/main/changelog.md"
 }

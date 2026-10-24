@@ -54,7 +54,7 @@ class RenderToolsTests(unittest.TestCase):
     def test_all_tools_have_encoders_runtime_routes_and_help(self):
         self.assertEqual(set(rt.BY_NAME), set(EXAMPLES))
         cpp = Path(__file__).resolve().parents[1] / "module/src/main/cpp"
-        runtime = (cpp / "runtime_bridge.cpp").read_text(encoding="utf-8") + (cpp / "native_command_catalog.h").read_text(encoding="utf-8")
+        runtime = (cpp / "runtime/runtime_bridge.cpp").read_text(encoding="utf-8") + (cpp / "mcp/native_command_catalog.h").read_text(encoding="utf-8")
         for name, args in EXAMPLES.items():
             with self.subTest(name=name):
                 encoded = rt.encode(name, args)

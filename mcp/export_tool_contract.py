@@ -27,11 +27,15 @@ def main():
     parser=argparse.ArgumentParser(__doc__)
     parser.add_argument("--check",action="store_true")
     parser.add_argument("--patch",action="store_true")
+    parser.add_argument("--write",action="store_true",help="Mechanically regenerate only mcp/typed_tool_contract.inc")
     args=parser.parse_args();text=content()
     if args.check:
         if not DEST.is_file() or DEST.read_text(encoding="utf-8")!=text:
             raise SystemExit("Typed MCP contract is stale; regenerate and run transport parity tests")
         print("Typed MCP contract matches all legacy tool definitions")
+    elif args.write:
+        DEST.write_text(text,encoding="utf-8",newline="\n")
+        print("Regenerated typed MCP contract")
     elif args.patch:
         if DEST.exists():
             old=DEST.read_text(encoding="utf-8")

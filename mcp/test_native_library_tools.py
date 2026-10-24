@@ -86,7 +86,7 @@ class InjectorTests(unittest.TestCase):
     def test_native_chunk_uses_larger_bounded_transport(self):
         source=Path(mcp_server.__file__).read_text(encoding="utf-8")
         self.assertIn('160*1024 if command.startswith("NATIVE_LIBRARY_CONTROL ")',source)
-        native=(Path(__file__).resolve().parents[1]/"module/src/main/cpp/cmd_server.cpp").read_text(encoding="utf-8")
+        native=(Path(__file__).resolve().parents[1]/"module/src/main/cpp/mcp/cmd_server.cpp").read_text(encoding="utf-8")
         self.assertIn('pending.rfind("NATIVE_LIBRARY_CONTROL ",0)==0?160*1024',native)
 
     def test_fresh_stdio_catalog_advertises_new_tools_without_target(self):

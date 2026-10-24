@@ -1,18 +1,24 @@
 # Zygisk IL2CPP MCP Bridge
 
-当前服务版本：**2.8.3** · 作者：**洋葱落日 && DUM**
+当前服务版本：**v2.9.0** · 作者：**洋葱落日 && DUM**
+
+HTTP 服务名称保持 `zygisk-il2cpp-native`，Python 服务名称保持 `zygisk-il2cpp-mcp`，服务版本字段均为 `2.9.0`。原有客户端配置中的连接名称（例如 `zygisk-il2cpp`）只是本地别名，可以继续使用；工具名称、安装 ID 和数据目录保持兼容。
+
+UE 接入提供 `unreal_*` 工具，HTTP 与 Python 共用；先发现并确认配置，再查询／检查／修改／Dump。`unreal_object_context` 查询归属、继承和直接子对象；`unreal_resolve_path` 只读加载对象／结构体／数组字段路径。`unreal_search` 可一轮查询多个类；`unreal_render` 支持刷新实例及相机自动获取，沿用现有渲染管理与样式工具。
 
 新版 HTTP 和 Python 默认共用设备端的完整工具目录、具名参数、结果、错误与功能开关。原生别名继续兼容。需要同时更新手机模块和本目录。
 
 新增共享工具 `frida_script`（原生 HTTP／Python 均可）：`status / load / list / post / messages / unload / unload_all / help`，支持官方 ARM64 GumJS 的 JavaScript 执行。`material_set` 同步修复可选 API 与失败记录造成的误拦截，支持整数属性 ID 重载。
 
+`frida_control`／`frida_script` 的 `{"op":"status"}` 同时返回 `build` 信息，说明当前安装版本的引擎来源、版本、模式、摘要及停用原因。MCP 不支持热替换引擎；两种连接的工具参数相同。
+
 2.7.9 修复原生 HTTP 中部分工具能列出却无法调用的问题，统一游戏帧路由，并保留具体错误和目标进程信息。目标内部 TCP 不可用时支持本地 Unix Socket 降级，连接配置不变。实例与集合工具同步改用完整快照计数、独立集合更新和最新按类查询。
 
-字段来源、Unicode 字符串搜索／修改、字符串交叉定位、地址到类／字段及实际内存关系链查询，以及 `debugger_breakpoint_set.on_hit` 命中寄存器修改继续保留。共享工具同时支持 Python stdio 与原生 HTTP
+字段来源、Unicode 字符串搜索／修改、字符串交叉定位、地址到类／字段及实际内存关系链查询，以及 `debugger_breakpoint_set.on_hit` 命中寄存器修改继续保留。共享工具同时支持 Python stdio 与原生 HTTP。
 
 ## 原生 HTTP 接入（不需要 Python）
 
-当前源码增加了手机模块内的 Streamable HTTP MCP 入口，与原有 Socket 共用配置端口。重新构建并安装本次模块后，进入模块 Web 菜单「MCP 连接」，复制 HTTP 配置到支持该传输的客户端：
+模块内置 Streamable HTTP MCP 入口，与原有连接共用配置端口。安装当前发布的模块后，进入 Web 菜单「MCP 连接」，复制 HTTP 配置到支持该传输的客户端：
 
 ```json
 {
@@ -125,9 +131,9 @@ python mcp/mcp_server.py --port 27184 --direct
 
 仅在建立连接失败时自动转发并重试；连接后发生超时/断开不会自动重放命令。目标重启后需重新解析运行时地址。
 
-2026-09-12 测试反馈修复：指针链批量结果/列表兼容原生数组，输入等待不再阻塞并行推送。此修复仅涉及 MCP Python，更新正在使用的 `mcp` 目录并重启 MCP 进程即可，无需为这几项重新编译或刷入模块。
+指针链批量结果和保存列表使用统一返回格式；输入等待支持与消息推送并行使用。是否完成、是否成功及后续读取位置均以工具回执为准。
 
-方法查询诊断：方法查询可自动回传执行阶段，断开时 MCP 错误中包含 `last_native_stage`，无需手工抓 logcat。此项需要新版模块配合；旧模块仍按原查询协议工作。
+方法查询诊断：方法查询可自动回传执行阶段，断开时 MCP 错误中包含 `last_native_stage`，无需手工抓 logcat。此项需要新版模块配合；旧模块仍按原查询协议工作。ImGui 注入开关、工作台布局及兼容边界。
 
 Python stdio 服务还会启动浏览器控制页面，默认地址是 `http://127.0.0.1:27185/`。新版默认读取和修改手机 Web 的同一份功能开关；电脑原有 `mcp_features.json` 不会自动覆盖手机设置。只有旧模块回退或显式 `--legacy-tools` 才使用本地配置。未连接时可查看缓存／旧目录，实际操作仍需连接设备。Python 可用参数：
 
@@ -224,8 +230,6 @@ MCP 中的 `config` 文本上限为 16 KiB；只填写需要覆盖的 API。`val
 
 建议先读取当前配置、查询允许的 API，再校验、确认保存，最后彻底退出并重启目标。不支持热切换当前进程的 API。持久配置供之后启动的目标读取，填写特定目标的映射时，应避免让其他目标带着不匹配的配置启动。完整参数以 `debug_help` 和工具 Schema 为准；这些是用户要求的符号配置工具，不包含功能限制器的管理接口。
 
-Web 也可以编辑同一份符号配置。菜单采用适配手机、平板和大屏的黑白、黑色文字与直角布局，没有阴影、彩色高亮、圆角、渐变或玻璃效果。以上是当前源码的功能说明，需更新手机模块和 MCP 服务后使用；不代表已经覆盖所有设备或混淆版本。
-
 ### 查询、调用与 Hook
 
 - `il2cpp_status`：初始化并附加 IL2CPP 线程，返回基址和 domain。
@@ -291,7 +295,7 @@ files/zygisk_il2cpp_mcp/il2cpp_dump_<随机后缀>.cs
 
 原有 38 个渲染/UI 工具继续保留，新增 33 个工作台与高级 UI 工具，共 71 个；接入默认开启的原有功能组，Lua 程序还依赖 `lua`。浏览器管理接口仍不暴露给 Agent。
 
-新增 `overlay_upsert_window/upsert_node/apply_tree` 支持独立父窗口、子窗口、控件树、表格/分页及绑定；`overlay_program_*` 管理可编程 UI。`render_*_rule(s)` 管理字段规则、血条和自动包围盒。工作台新增帧队列检查器/精确调用、符号书签和目标端剪贴板/文件导出。
+新增 `overlay_upsert_window/upsert_node/apply_tree` 支持独立父窗口、子窗口、控件树、表格/分页及绑定；`overlay_program_*` 管理可编程 UI。`render_*_rule(s)` 管理字段规则、血条和自动包围盒。工作台新增帧队列检查器/精确调用、符号书签和目标端剪贴板/文件导出。完整参数以 `debug_help` 为准。
 
 - UI：`overlay_status`、`overlay_set`、`overlay_set_window`、`overlay_reset`，管理中英语言、Classic/Dark/Light 主题、可见性、原生折叠、位置尺寸、缩放和透明度。
 - 对象：`render_status`、`render_list_objects`、`render_add_object`、`render_update_object`、`render_remove_object`、`render_clear_objects`、`render_set_object_position`、`render_set_object_bones`。
@@ -491,7 +495,7 @@ Python 工具 `render_find_objects`／`render_track_class` 默认 `include_inact
 
 `logic_program_schema/validate/set/list/get/control/remove` 提供独立于 Lua 的通用 JSON 逻辑运行时。AI 通过 MCP 查询语法并提交变量、条件、遍历、动态对象源、字段读取及绘制/UI 变量输出；目标游戏的字段、筛选规则和窗口布局由调用方下发，底层不预装业务程序。
 
-原生界面的“AI 逻辑”页可编辑、校验、启停和查看诊断。设置 `auto_start=true` 后保存 `default` 工作区预设，可在下次启动重新解析对象源。
+原生界面的“AI 逻辑”页可编辑、校验、启停和查看诊断。只读程序可设置 `auto_start=true` 后保存 `default` 工作区预设，下次启动重新解析对象源。方法调用需要显式开启 `allow_calls` 并遵守去重、确认和恢复限制；不直接开放字段写入或 Hook。
 
 ## Help 与兼容性
 

@@ -32,7 +32,7 @@ else:
 
 
 SERVER_NAME = "zygisk-il2cpp-mcp"
-SERVER_VERSION = "2.8.3"
+SERVER_VERSION = "2.9.0"
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = {
     "2024-11-05",
@@ -49,6 +49,7 @@ FEATURES: dict[str, str] = {
     "overlay_ui": "In-game ImGui language, theme, window and visibility controls",
     "rendering": "Java SurfaceView object visualization, styles, cameras and game-frame sampling",
     "il2cpp_metadata": "IL2CPP status, dump, metadata listing, and fuzzy search",
+    "unreal": "Unreal ARM64 validated-profile objects, reflected metadata, field inspection and private Dump",
     "il2cpp_invoke": "IL2CPP managed method invocation",
     "il2cpp_objects": "IL2CPP object, List, array, and Dictionary inspection",
     "il2cpp_hook": "IL2CPP method hooks",

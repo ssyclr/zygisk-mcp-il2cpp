@@ -9,8 +9,8 @@ CPP = Path(__file__).resolve().parents[1] / "module/src/main/cpp"
 class ReturnHandleSourceContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.handles = (CPP / "runtime_return_handles.inc").read_text(encoding="utf-8")
-        cls.inspector = (CPP / "runtime_inspector.inc").read_text(encoding="utf-8")
+        cls.handles = (CPP / "runtime/runtime_return_handles.inc").read_text(encoding="utf-8")
+        cls.inspector = (CPP / "runtime/runtime_inspector.inc").read_text(encoding="utf-8")
 
     def test_cache_is_bounded_and_keeps_weak_identity_not_address(self):
         self.assertIn("constexpr size_t Capacity=320", self.handles)

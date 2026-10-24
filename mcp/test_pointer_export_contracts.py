@@ -11,9 +11,11 @@ CPP = Path(__file__).resolve().parents[1] / "module/src/main/cpp"
 class PointerExportSourceContracts(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.runtime = (CPP / "runtime_bridge.cpp").read_text(encoding="utf-8")
-        cls.export = (CPP / "runtime_pointer_export.inc").read_text(encoding="utf-8")
-        cls.chains = (CPP / "runtime_pointer_chains.inc").read_text(encoding="utf-8")
+        cls.runtime = (CPP / "runtime/runtime_bridge.cpp").read_text(encoding="utf-8")
+        cls.memory_tu = (CPP / "runtime/runtime_bridge_memory.cpp").read_text(encoding="utf-8")
+        cls.internal = (CPP / "runtime/runtime_bridge_internal.h").read_text(encoding="utf-8")
+        cls.export = (CPP / "runtime/runtime_pointer_export.inc").read_text(encoding="utf-8")
+        cls.chains = (CPP / "runtime/runtime_pointer_chains.inc").read_text(encoding="utf-8")
         cls.chain_ui = (CPP / "overlay/pointer_chains_menu.inc").read_text(encoding="utf-8")
         cls.menu = (CPP / "overlay/menu.cpp").read_text(encoding="utf-8")
 
@@ -85,8 +87,10 @@ class PointerExportSourceContracts(unittest.TestCase):
                 self.assertNotIn(forbidden, receipt)
 
     def test_native_wiring_and_both_manual_entry_points(self):
-        self.assertIn('#include "runtime_pointer_export.inc"', self.runtime)
-        self.assertIn("std::string pointerScanMetadata", self.runtime)
+        # pointer_export.inc now compiles in the memory sibling TU; the shared
+        # MemorySearchSession (with pointerScanMetadata) lives in the core header.
+        self.assertIn('#include "runtime_pointer_export.inc"', self.memory_tu)
+        self.assertIn("std::string pointerScanMetadata", self.internal)
         self.assertIn("PointerExport::capture(session, body, words", self.runtime)
         self.assertIn('command=="MEMORY_CHAIN_EXPORT"', self.chains)
         self.assertIn('chainExport.send("MEMORY_CHAIN_EXPORT"', self.chain_ui)

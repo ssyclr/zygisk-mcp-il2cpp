@@ -30,6 +30,8 @@ BY_NAME = {t["name"]: t for t in TOOLS}
 def encode(name: str, args: dict) -> str:
     definition = DEFINITIONS[name]
     r.validate(args, BY_NAME[name]["inputSchema"], "arguments")
+    if name == "unreal_search" and "class_filter" in args and "class_filters" in args:
+        raise ValueError("class_filter and class_filters cannot be combined")
     if "on_hit" in args:
         args={**args,"on_hit":{**args["on_hit"],"registers":register_tools.normalize(args["on_hit"]["registers"])}}
     if name == "field_activity":
