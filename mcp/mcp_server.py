@@ -23,16 +23,16 @@ from urllib.parse import urlparse
 
 if __package__:
     from . import (render_tools, workspace_tools, debug_tools, logic_tools,
-                   relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools, analysis_tools, native_transport)
+                   relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools, python_tools, analysis_tools, native_transport)
 else:
     import render_tools, workspace_tools, debug_tools, logic_tools
-    import relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools
+    import relationship_tools, paused_debug_tools, task_tools, workflow_tools, native_library_tools, python_tools
     import analysis_tools
     import native_transport
 
 
 SERVER_NAME = "zygisk-il2cpp-mcp"
-SERVER_VERSION = "2.9.0"
+SERVER_VERSION = "2.9.3"
 LATEST_PROTOCOL = "2025-11-25"
 SUPPORTED_PROTOCOLS = {
     "2024-11-05",
@@ -62,6 +62,7 @@ FEATURES: dict[str, str] = {
     "frida": "Optional embedded Frida Gum instrumentation and Stalker",
     "trace": "Dobby execution tracing and trace backtraces",
     "lua": "Embedded LuaJIT execution",
+    "python": "Optional on-demand CPython 3.14 scripting extension host",
     "assembly": "Assembly, disassembly, and instruction patching",
     "decompiler": "Ghidra-native ARM64 C pseudocode decompilation",
     "native_libraries": "Explicit custom SO upload/loading in the connected target",
@@ -69,12 +70,14 @@ FEATURES: dict[str, str] = {
     "diagnostics": "Runtime capabilities, help, and raw bridge commands",
 }
 
+FEATURE_DEFAULTS: dict[str, bool] = {"python": False}
+
 class FeatureRegistry:
-    """Thread-safe MCP-side feature flags. Every feature defaults to enabled."""
+    """Thread-safe MCP-side feature flags. Existing features default enabled; python defaults off."""
 
     def __init__(self, config_path: str | os.PathLike[str] | None = None):
         self._lock = threading.RLock()
-        self._states = {name: True for name in FEATURES}
+        self._states = {name: FEATURE_DEFAULTS.get(name, True) for name in FEATURES}
         self._config_path = Path(config_path).expanduser() if config_path else None
         self._listeners: list[Callable[[], None]] = []
         self._remote = None
@@ -88,7 +91,7 @@ class FeatureRegistry:
         if self._remote is None:return
         info=self._remote.info(force=force)
         if info is None:return
-        states={name:bool(info["features"].get(name,True)) for name in FEATURES}
+        states={name:bool(info["features"].get(name,FEATURE_DEFAULTS.get(name, True))) for name in FEATURES}
         if "_invalid" in info["features"]:states={name:False for name in FEATURES}
         with self._lock:
             signature=tuple(t["name"] for t in info["tools"])
@@ -1603,6 +1606,7 @@ TOOLS.extend(paused_debug_tools.TOOLS)
 TOOLS.extend(task_tools.TOOLS)
 TOOLS.extend(workflow_tools.TOOLS)
 TOOLS.extend(native_library_tools.TOOLS)
+TOOLS.extend(python_tools.TOOLS)
 _existing_names = {t["name"] for t in TOOLS}
 TOOLS.extend(t for t in analysis_tools.TOOLS if t["name"] not in _existing_names)
 TOOLS = [analysis_tools.BY_NAME.get(t["name"], t) for t in TOOLS]
@@ -1629,6 +1633,8 @@ def tool_features(name: str) -> tuple[str, ...]:
         return ("native_libraries",)
     if name in workflow_tools.BY_NAME:
         return workflow_tools.features(name)
+    if name in python_tools.BY_NAME:
+        return python_tools.features(name)
     if name in task_tools.BY_NAME:
         return task_tools.features(name)
     if name in paused_debug_tools.BY_NAME:
@@ -1715,7 +1721,7 @@ def raw_command_features(native_name: str) -> tuple[str, ...]:
     exact = (logic_tools.native_features(native_name) or debug_tools.native_features(native_name) or
              relationship_tools.native_features(native_name) or paused_debug_tools.native_features(native_name) or
              task_tools.native_features(native_name) or workflow_tools.native_features(native_name) or
-             workspace_tools.native_features(native_name))
+             python_tools.native_features(native_name) or workspace_tools.native_features(native_name))
     if exact is not None:
         return exact
     if native_name.startswith(("RENDER_", "OVERLAY_")):
@@ -2065,6 +2071,8 @@ class ToolDispatcher:
             method = lambda args: self._workflow_call(name, args)
         if name in native_library_tools.BY_NAME:
             method = lambda args: self._native_library_call(name, args)
+        if name in python_tools.BY_NAME:
+            method = lambda args: self._python_call(name, args)
         if name in analysis_tools.BY_NAME and name not in paused_debug_tools.BY_NAME and name not in {"memory_read", "memory_write"}:
             method = lambda args: self._analysis_call(name, args)
         if method is None:
@@ -2122,6 +2130,14 @@ class ToolDispatcher:
         except (ValueError, OverflowError, RecursionError) as exc:
             raise BridgeError(str(exc)) from exc
         return self._json_call(command)
+
+    def _python_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        try:
+            command = python_tools.encode(name, arguments)
+        except (ValueError, OverflowError, RecursionError) as exc:
+            raise BridgeError(str(exc)) from exc
+        minimum_timeout = 35.0 if name == "python_run" else 15.0
+        return self._json_call(command, timeout=max(self.config.timeout, minimum_timeout))
 
     def _relationship_call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         try:

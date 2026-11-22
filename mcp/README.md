@@ -1,8 +1,8 @@
 # Zygisk IL2CPP MCP Bridge
 
-当前服务版本：**v2.9.0** · 作者：**洋葱落日 && DUM**
+当前服务版本：**v2.9.3** · 作者：**洋葱落日 && DUM**
 
-HTTP 服务名称保持 `zygisk-il2cpp-native`，Python 服务名称保持 `zygisk-il2cpp-mcp`，服务版本字段均为 `2.9.0`。原有客户端配置中的连接名称（例如 `zygisk-il2cpp`）只是本地别名，可以继续使用；工具名称、安装 ID 和数据目录保持兼容。
+HTTP 服务名称保持 `zygisk-il2cpp-native`，Python 服务名称保持 `zygisk-il2cpp-mcp`，服务版本字段均为 `2.9.3`。原有客户端配置中的连接名称（例如 `zygisk-il2cpp`）只是本地别名，可以继续使用；工具名称、安装 ID 和数据目录保持兼容。
 
 UE 接入提供 `unreal_*` 工具，HTTP 与 Python 共用；先发现并确认配置，再查询／检查／修改／Dump。`unreal_object_context` 查询归属、继承和直接子对象；`unreal_resolve_path` 只读加载对象／结构体／数组字段路径。`unreal_search` 可一轮查询多个类；`unreal_render` 支持刷新实例及相机自动获取，沿用现有渲染管理与样式工具。
 
@@ -523,6 +523,68 @@ Python 工具 `render_find_objects`／`render_track_class` 默认 `include_inact
 - `dobby_version`：读取内置 Dobby 版本标识。
 
 桥接层还保留现有 Socket 功能：`ping`、剪贴板、Unity 输入框以及 `raw_hook_call`。因此新增原生命令后，无需先改 MCP Server 也能调用。
+
+## 可选 Python 扩展工具 (`python` 功能组，默认关闭)
+
+刷入独立扩展 ZIP（`zygisk-il2cpp-mcp-pyext-v1.0.0.zip`）并在 Web「功能开关」打开 `python` 后，可使用以下 13 个工具按需控制 Root 托管的 CPython 3.14 运行时与 `zmcp` 脚本（所有路径均限定在固定配置根目录 `/data/adb/zygisk_il2cpp_mcp/python` 下）：
+
+- `python_status`：查询扩展就绪状态、托管状态、宿主 PID、活跃 Hook、丢弃事件与加载脚本。
+- `python_run`：在按需启动的 CPython 宿主中执行临时 Python 代码并返回标准输出与结果。
+- `python_script_save` / `python_script_get` / `python_script_list` / `python_script_remove`：管理包目录及 `_global` 目录下的 `.py` 脚本。
+- `python_load` / `python_unload` / `python_reload`：在隔离命名空间加载、卸载（自动清理其脚本拥有的 Hook/定时器/事件处理器）或重载脚本。
+- `python_autorun_set` / `python_autorun_list`：配置指定包名在 `attached` / `il2cpp_ready` / `unity_ready` 阶段的自启条目。
+- `python_logs`：分页读取当前会话日志与错误信息。
+- `python_stop_all`：立即停止全部脚本、清理 Python Hook 并终止宿主进程（同时接入 `debug_stop_all`）。
+
+`overlay_apply_tree` / `overlay_upsert_node` 亦新增 `persist: bool` 与 `action: {"python", "entry", "scope"}` 字段；脚本示例见 [extensions/python/examples/godmode_demo.py](../extensions/python/examples/godmode_demo.py)。
+
+### `zmcp` Python SDK 语法速查与 AI 自省
+
+AI 在调用 `python_run` 或 `python_script_save` 时，不仅可以直接从工具描述（`tools/list` schema description）看到 `zmcp` 语法摘要，还可以在 `python_run` 中随时调用 **`zmcp.help()`** 动态自省任何子系统的方法签名：
+
+```python
+# 1. 查看全局语法速查与所有已绑定门面列表
+zmcp.help()
+
+# 2. 查看任意门面或类的完整方法名、参数签名与说明
+zmcp.help("il2cpp")
+zmcp.help("mem")
+zmcp.help("ui")
+zmcp.help("hook")
+zmcp.help("ClassRef")
+zmcp.help("MethodRef")
+zmcp.help("ObjectRef")
+zmcp.help("WindowBuilder")
+zmcp.help("render")
+zmcp.help("unreal")
+```
+
+#### 核心门面与常用语法
+- **IL2CPP (`zmcp.il2cpp` / `ClassRef` / `MethodRef` / `ObjectRef`)**：
+  - `zmcp.il2cpp.images(filter="")`、`zmcp.il2cpp.classes(image, filter="", namespace="")`
+  - `cls = zmcp.il2cpp.class_of("Assembly-CSharp", "PlayerController", namespace="Game")`
+    - `cls.methods(filter="")`、`cls.fields(filter="")`、`m = cls.method("Move", argc=None)`、`cls.invoke("Move", [1, 2], instance=0x...)`
+  - `m = zmcp.il2cpp.method("Assembly-CSharp", "Game", "PlayerController", "Move", argc=None)`
+    - `m.address`、`m.address_hex`、`m.invoke(args, instance=...)`、`m.call(...)`、`m.call_exact(...)`、`m.hook_return(val)`、`m.unhook()`、`m.disassemble(32)`、`m.decompile()`
+  - `obj = zmcp.il2cpp.object(0x7000123400)`
+    - `val = obj["health"]`、`obj["health"] = 999`、`obj.inspect()`、`obj.members()`、`obj.items()`、`obj.dict_get(key)`、`obj.dict_items()`、`obj.resources()`
+- **内存 (`zmcp.mem`)**：
+  - 基础与类型化读写：`read(addr, size)`、`write(addr, bytes_or_hex)`、`read_i8/u8/i16/u16/i32/u32/i64/u64/ptr/bool/f32/f64/cstring/utf16(addr)`、`write_*(addr, val)`、`batch_edit(edits)`
+  - 模块与字符串：`modules(filter="")`、`find_module(name)`、`address_info(addr)`、`resolve_address(expr)`、`strings()`、`search_strings(query)`、`string_xrefs(query)`、`string_write(addr, text)`
+  - 搜索、指针链与冻结：`search(pattern)`、`search_value(val, type)`、`search_exact(val, type)`、`search_fuzzy(mode, type)`、`filter_value(val)`、`results()`、`clear_search()`、`resolve_chain(base, [off1, off2])`、`read_chain(...)`、`write_chain(...)`、`scan_base(target)`、`freeze(addr, val, type)`、`unfreeze(addr)`、`clear_freezes()`
+- **Hook (`zmcp.hook`)**：
+  - `@zmcp.hook.il2cpp(m, mode="async"|"native"|"sync", replace_return=..., arg_filters=...)`
+  - `@zmcp.hook.addr(0x7000123400, mode="async"|"native"|"sync", ...)`
+  - `sync` 回调 `def on_hit(ctx: zmcp.HookContext):` 支持 `ctx.args[i]`、`ctx.set_arg(i, val)`、`ctx.set_return(val)`、`ctx.skip_original()`
+- **悬浮 UI (`zmcp.ui` & `WindowBuilder`)**：
+  - `with zmcp.ui.window("win_id", "标题") as w:` 支持 18 种节点构建方法：`toggle`、`slider`、`button`、`select`、`combo`、`radio`、`input`、`text`、`separator`、`spacer`、`group`、`child`、`tree`、`tabs`、`tab`、`table`、`progress`、`plot`、`color`
+  - `@zmcp.changed("node_id")`、`zmcp.ui.toast("提示")`、`zmcp.ui.prompt_input(title="输入")`
+- **生命周期、定时器与键值存储**：
+  - `@zmcp.on("attached" | "il2cpp_ready" | "unity_ready" | "exiting" | "ui:<node_id>")`
+  - `@zmcp.every(1.0)`、`zmcp.log("msg")`、`zmcp.store.get/set/delete`、`zmcp.main_thread(...)`
+- **15 个领域门面与底层 API**：
+  - `zmcp.dobby`、`zmcp.asm`、`zmcp.decomp`、`zmcp.analysis`、`zmcp.bp`、`zmcp.debugger`、`zmcp.frida`、`zmcp.lua`、`zmcp.unity`、`zmcp.render`、`zmcp.unreal`、`zmcp.logic`、`zmcp.workspace`、`zmcp.native_lib`、`zmcp.diag`
+  - `zmcp.api.<tool_name>(...)`（287 个自动生成的具名函数，含完整签名与 docstring）及 `zmcp.mcp.<tool_name>(...)` 动态透传。
 
 ## 注意
 

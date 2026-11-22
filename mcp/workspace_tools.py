@@ -6,6 +6,7 @@ All descriptors are bounded; the native side validates IDs, parent graphs and ty
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable
 try:
     from . import render_tools as r
@@ -44,7 +45,10 @@ LOCAL_ACTIONS = ("OVERLAY_SET", "OVERLAY_WINDOW", "OVERLAY_RESET", "RENDER_STYLE
     "RENDER_UNTRACK_CLASS", "RENDER_PRIMITIVE_SET", "RENDER_PRIMITIVE_REMOVE")
 GAME_ACTIONS = ("IL2CPP_CALL_EXACT", "IL2CPP_FIELD_SET")
 ACTION = {**obj({"command": r.enum(*LOCAL_ACTIONS, *GAME_ACTIONS),
-    "arguments": {"type": "string", "maxLength": 4096}, "game_thread": B}, ("command", "arguments")),
+    "arguments": {"type": "string", "maxLength": 4096}, "game_thread": B,
+    "python": {"type": "string", "minLength": 1, "maxLength": 64},
+    "entry": {"type": "string", "minLength": 1, "maxLength": 64},
+    "scope": r.enum("package", "global")}, ()),
     "type": ["object", "null"]}
 BINDING = {**obj({"source": r.enum("object", "render_style", "variable"), "id": TEXT,
     "path": TEXT, "write": B}, ("source",)), "type": ["object", "null"]}
@@ -56,7 +60,7 @@ NODE = descriptor({**COMMON, "window": ID, "parent": TEXT,
     "values": array(r.number(-1e20, 1e20), 512), "enabled": B, "color": COLOR,
     "width": r.number(0, 32768), "height": r.number(0, 32768), "columns": integer(1, 8),
     "same_line": B, "tooltip": {"type": "string", "maxLength": 1024},
-    "binding": BINDING, "action": ACTION, "event": TEXT})
+    "binding": BINDING, "action": ACTION, "event": TEXT, "persist": B})
 TREE = obj({"windows": array(WINDOW, 32), "nodes": array(NODE, 256)})
 PROGRAM = obj({"id": {**ID, "maxLength": 32, "pattern": r"[^:]+"}, "source": {"type": "string", "minLength": 1, "maxLength": 65536},
                "enabled": B, "allow_game_actions": B}, ("id",))
@@ -171,12 +175,24 @@ def _json(value: Any, limit: int = 65536) -> str:
 def _node(value: dict) -> None:
     action = value.get("action")
     if action:
-        if any(c in action["arguments"] for c in "\r\n"):
-            raise ValueError("action arguments must be a single line")
-        if action["command"] in GAME_ACTIONS and not action.get("game_thread"):
-            raise ValueError("game actions require game_thread=true")
-        if action.get("game_thread") and action["command"] not in GAME_ACTIONS:
-            raise ValueError("unsupported game-thread action")
+        has_cmd = action.get("command") is not None
+        has_py = action.get("python") is not None
+        if has_cmd == has_py:
+            raise ValueError("action must specify either command or python")
+        if has_py:
+            if set(action) - {"python", "entry", "scope"}:
+                raise ValueError("python action only allows python/entry/scope")
+            if not re.fullmatch(r"[A-Za-z0-9_-]+(?:\.py)?", action["python"]):
+                raise ValueError("invalid python script name in action")
+            if "entry" in action and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", action["entry"]):
+                raise ValueError("invalid python entry identifier")
+        else:
+            if "arguments" not in action or any(c in action["arguments"] for c in "\r\n"):
+                raise ValueError("native action requires single-line arguments")
+            if action["command"] in GAME_ACTIONS and not action.get("game_thread"):
+                raise ValueError("game actions require game_thread=true")
+            if action.get("game_thread") and action["command"] not in GAME_ACTIONS:
+                raise ValueError("unsupported game-thread action")
     binding = value.get("binding")
     if binding and binding["source"] == "object":
         if not binding.get("id") or not binding.get("path"):

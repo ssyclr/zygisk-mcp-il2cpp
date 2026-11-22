@@ -10,6 +10,7 @@ from unittest.mock import call, patch
 from mcp.mcp_server import (
     BridgeError,
     ConnectionConfig,
+    FEATURE_DEFAULTS,
     FeatureRegistry,
     HookSocketClient,
     McpServer,
@@ -150,7 +151,7 @@ class McpServerTests(unittest.TestCase):
         registry = FeatureRegistry()
         dispatcher = ToolDispatcher(ConnectionConfig(auto_adb_forward=False), registry)
         server = McpServer(dispatcher)
-        self.assertTrue(all(item["enabled"] for item in registry.snapshot()["features"]))
+        self.assertTrue(all(item["enabled"] == FEATURE_DEFAULTS.get(item["name"], True) for item in registry.snapshot()["features"]))
 
         registry.set("memory_write", False)
         response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}})
